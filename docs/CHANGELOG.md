@@ -1,50 +1,21 @@
-## v1.7.36
+## v1.8.0
 
-更新通道改指本仓库的维护版本（fork 维护线）。套件 227 个（168 Python + 59 JS）。
+本版汇总 `v1.7.33` 之后的四个修复，并补记此前已进入发布页、但未写入仓库 CHANGELOG 的三项改动。套件 226 个（167 Python + 59 JS）。
 
-> 维护状态：本仓库自 v1.7.33 起进入低频维护，自 v1.7.34 起由 fork 维护线独立发版。上游对非官方
-> 客户端的识别在收紧，账号风控与封禁请自行承担；本维护线只修代码缺陷，不承诺账号可用性。
+> **维护状态（2026-10-23）**：WorkBuddy 对非官方客户端的识别与拦截持续收紧，维护者近期工作压力增大，更新与 Issue / PR 处理将显著放缓。上游可能随时彻底收紧导致不可用；账号风控 / 限流 / 封禁风险由使用者自行承担。请优先使用官方客户端，不要使用主账号或商业转售。
 
-- **更新通道与部署产物改指本仓库**：`wb_updates.DEFAULT_REPOSITORY` 与
-  `wb_update_portable.REPO_DEFAULT` 原本仍指 `ardeyouxipianyi/workbuddy2api-hub`，
-  `docker-compose.yml` / `quick-deploy.sh` 的默认镜像与面板页头链接同样指向上游。
-  后果是上游一旦发版，面板就会提示更新，点一次「安装」即把上游构建装回来，静默覆盖
-  v1.7.34 的日志阻塞与退出中止修复、v1.7.35 的连登降级，而 `accounts/` 与 `usage/` 不回滚。
-  现已全部改指本仓库；`WB_UPDATE_REPO` 仍可切换更新源，也是本次改动的回滚手段。
-- **新增钉住断言**：`tests/_test_update_check.py` 加 `UpdateSourceTests`（4 条，60 → 64）、
-  `tests/_test_portable_update.py` 加 `UpdateSourceTests`（3 条，26 → 27）、
-  `tests/_test_deploy_modes.py` 加 `test_deploy_defaults_pull_the_image_this_repo_builds`。
-  把默认仓库或镜像名改回上游值，这三处都会红。
+- **更新检查超时放宽到 10 秒**（#640）：Releases API 受限时，回退下载路径在代理出口实测需要 4.2～10 秒；旧的 5 秒上限会把本可成功的回退一起掐掉。现在两条路径各有 10 秒，失败仍按每日节流重试，不会挂住面板。
+- **stderr 日志通道不再阻塞请求线程**（#642）：请求线程只向 2000 行有界队列 `put_nowait()`，由单个守护线程负责真正写入；队列满时丢行并计数，首次和每 1000 行写一条 WARN 到看板日志。退出路径用 0.5 秒超时刷队列，`sys.stderr is None`（pythonw）直接跳过。日志内容、脱敏与看板顺序不变。
+- **桌面 chat 可选协议一致性**（#643）：设置进程环境 `WB_DESKTOP_CHAT_COMPAT=1` 后重启，仅桌面产品的 chat 去掉浏览器请求头，补齐 SDK runtime 元数据与 B3 parent span。默认关闭；CLI、VSCode、计费 REST、请求体、设备 token 与退避逻辑不变。参考 workbuddy2api-panel 的桌面报文对照，未独立复核原始抓包，不构成 TLS 指纹模拟或免封保证。
+- **国际版每日活跃证书失败降级**（#645 / #647）：ACP 沙箱域名由 EdgeOne 下发 `*.cdn.myqcloud.com` 通配证书，Python ssl 必然报 Hostname mismatch。国际版现在也能按 `www.workbuddy.ai` 调用 `POST /v2/report`，连登查询同样按账号出口选 base；设置页新增「证书失败改走活跃上报」，**默认关闭**。仅证书类错误可降级，沙箱未就绪、轮次超时、业务拒绝仍如实失败；回退上报被拒时保留当天未完成状态供下轮重试。
+- **补记 v1.7.31 发布内容**：恢复 `model_aliases` 映射并避免后台模型改写误伤显式选择（#617 / #619）；收窄 CN 专属模型判定（#618）；OpenCode 一键配置写入真实 `limit.context` / `limit.output`（#625）；Chat / Responses / Anthropic Messages 三条流式路径在真实静默期发送 SSE 心跳（#578）。
 
-验证：本地 `227 passed, 0 failed, 0 skipped`（macOS，Python 3.12.14）；Python 3.9.25 腿
-`compileall` 通过且三个改动套件 64 / 27 / 7 全绿；CI 三腿（ubuntu 3.9、ubuntu 3.12、
-windows 3.12）绿。真网关冒烟：`/health` ok、面板 200、`POST /updates/check` 后
-`GET /updates` 的 `release_url` 已指向本仓库、stderr 无 Fatal。真实网络下
-`fetch_releases()` 返回本仓库的 `v1.7.35` / `v1.7.34`。
+验证：
 
-## v1.7.35
-
-国际版每日活跃的连登降级版本（fork 维护线）。套件 227 个（168 Python + 59 JS）。
-
-> **维护状态**：本版由 fork 维护者接手发布。上游对非官方客户端的识别与拦截仍在收紧，账号风控 / 限流 / 封禁风险由使用者自行承担。
-
-- **国际版每日活跃：沙箱证书校验失败时改走活跃上报**（#645）：上游给网页通道分配的 ACP 沙箱域名 `*.workbuddy.cloudagent-app.net` 解析到腾讯云 EdgeOne，边缘节点下发的是 `*.cdn.myqcloud.com` 通配证书，Python 的 ssl 必然报 `Hostname mismatch`，这一轮重试永远不会成功。旧实现把它当成「这一轮没跑完」按预算重试到底，最后整轮判 `ok: false`，面板上一片「集体封号」的错觉——实际积分照发，丢的只是 growth 连登。同时国际版本来就有连登体系，只是代码把它挡在门外：`report_activity()` 从「仅国内版」放开到 `cn + intl`，国际版按自己的 `chat_base_url()`（`https://www.workbuddy.ai`）上报，`fetch_streak_days()` 的 base 也改成按账号出口取（原先写死国内，国际版永远读不到天数）；网页腿失败且错误串命中证书标记时，若新开关 `daily_chat_web_fallback_activity` 打开就改走一次活跃上报，成功则把当天算完成（结果带 `web_fallback` 明细）。新增 `wb_accounts.is_tls_verify_text()` 复用同一张证书标记表——`wb_webagent.run_turn` 把异常折成「<类型>: <消息>」文本，调用方拿不到异常对象。**开关默认关，升级后线上行为不变**：证书失败仍如实报失败、仍不写 `lastDailyChat`；沙箱未就绪 / 轮次超时 / 业务拒绝一律不降级。新增 `tests/_test_daily_chat_activity_fallback.py`（12 项），改写 `tests/_test_streak_report.py` 里两条「国际版永不参与活跃上报」的断言并补两条 base 选择断言。
-- **维护与文档**：版本号同步到 `wb_proxy.py`、OpenWrt `PKG_VERSION`、README 徽章与记录区间；面板新增文案同步中文 / 繁体 / 英文三处词典。
-
-验证：本地 `227 passed, 0 failed, 0 skipped`（macOS，Python 3.12.14）+ Python 3.9.25 复跑；Linux（Python 3.12.3）同批套件全绿；CI 三腿（ubuntu 3.9 / ubuntu 3.12 / windows 3.12）全绿。真上游验证：在国际版账号上执行 `report_activity()` 后连登天数由 0 变 1（2 秒后复查），证明降级路径真实点亮连登；CN 出口 `hy3` 与 `deepseek-v4-pro` 端到端返回真实模型回复。
-
-## v1.7.34
-
-控制台日志链路的两个致命缺陷修复版本（fork 维护线）。套件 226 个（167 Python + 59 JS）。
-
-> **维护状态**：本版由 fork 维护者接手发布，在 v1.7.33 之上补齐日志通道的稳定性问题。上游对非官方客户端的识别与拦截仍在收紧，账号风控 / 限流 / 封禁风险由使用者自行承担。
-
-- **控制台日志写满管道后不再打死整条请求链路**（#642）：`log()` 直接 `sys.stderr.write()` + `flush()`，外层 `try/except` 只吃得掉「写抛异常」（EPIPE），吃不掉「写永久阻塞」——stderr 是「读端在、但从不读」的管道时（终端被回收、`| head`、日志收集器卡死），累计约 64 KB 访问日志后写入方再也不返回。访问日志在响应头之前发出，于是除 `/logs`、`/usage`、`/health`、`/realm`、`/panel/status` 这类静默白名单端点外，所有端点连状态行都不给。现在控制台输出改走**有界队列 + 单后台写线程**：`log()` 只入队立即返回，队列上限 512 行、满则丢最旧一条并计数，读端恢复后补一行「读端跟不上，丢弃了 N 行（看板日志照常完整）」；`fileno()` 不可用的流（`io.StringIO`，测试与嵌入场景）仍走同步写，脱敏行为不变；关停时最多等 1 秒尽力刷完。新增 `tests/_test_console_log_backpressure.py`（25 项）。
-- **修复控制台写线程让进程在退出时被中止**：上一项把控制台输出挪到后台线程后，`sys.stderr` 那个 `BufferedWriter` 的锁就由写线程持有；进程退出时 CPython 进入 finalize 阶段，若写线程还攥着这把锁，解释器不走「优雅丢弃」而是直接 `Fatal Python error: _enter_buffered_busy` 并 SIGABRT（Windows 上是 `0xC0000409`）——只写 5 行日志就退出，实测 6/6 次中止。这比原来的卡死更凶：卡死只打死请求，这条直接打死进程。现在写线程在进程收尾前被显式停掉：`atexit` 注册 `_stop_console_writer()`，`/shutdown` 与 Windows 控制台关闭处理里也各补一次（`os._exit` 会跳过 `atexit`）；同时落到控制台的写改走 `os.write()`，只经内核、不参与那把锁（Windows 交互式控制台例外，仍走 `stream.write` 以保住中文编码）。另修一处退出丢日志：`_console_flush()` 原来只认「队列空」，现在把「有一行正在写」也算进去。
-- **TCP_NODELAY 断言改成平台无关**：`tests/_test_http_limits.py` 曾断言 `getsockopt(TCP_NODELAY) == 1`，而 macOS 的 xnu 在置位后回报 `4`、Linux 回报 `1`，于是非 Linux 平台上这条套件恒红。改为断言「非 0 即已置位」，保留「属性写了但没人用」的行为级约束。
-- **维护与文档**：版本号同步到 `wb_proxy.py`、OpenWrt `PKG_VERSION`、README 徽章与记录区间。
-
-验证：本地 `226 passed, 0 failed, 0 skipped`（macOS 14.7，Python 3.12.14；Linux 侧 CI 三腿绿）。端到端冒烟在真实上游执行：CN 出口 `deepseek-v4-pro` 与 `hy3` 均返回真实回复，流式整轮复用同一 chunk id。
+- 本地完整矩阵：`226 passed, 0 failed, 0 skipped`。
+- GitHub CI：Ubuntu 3.9、Ubuntu 3.12、Windows 3.12 与 revert guard 均通过。
+- 发布前补跑发布工程与资产套件、`py_compile`、`git diff --check` 与干净检出检查。
+- 本机没有真实账号池，**未执行网关到 WorkBuddy 上游的真实模型冒烟**；#645 的上游证书恢复与真实账号连登 `0 -> 1` 仍需部署方复测。
 
 ## v1.7.33
 

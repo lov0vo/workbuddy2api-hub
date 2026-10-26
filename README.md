@@ -22,7 +22,7 @@
 This project is for protocol research and personal use only. Prefer the official client, do not use your primary account, and do not resell or share access.
 
 <p align="center">
-  <a href="https://github.com/yuanyuanyuan430/workbuddy2api-hub/releases"><img src="https://img.shields.io/badge/Release-v1.7.36-2496ED?style=flat-square" alt="Version 1.7.36"></a>
+  <a href="https://github.com/ardeyouxipianyi/workbuddy2api-hub/releases"><img src="https://img.shields.io/badge/Release-v1.8.0-2496ED?style=flat-square" alt="Version 1.8.0"></a>
   <img src="https://img.shields.io/badge/Python-3.9+-blue.svg?style=flat-square" alt="Python">
   <img src="https://img.shields.io/badge/API-OpenAI_Compatible-412991?style=flat-square" alt="OpenAI API">
   <img src="https://img.shields.io/badge/Dual_Realm-Intl_&_CN-0DBD8B?style=flat-square" alt="Dual Realm">
@@ -94,10 +94,10 @@ This project is for protocol research and personal use only. Prefer the official
 
 ```bash
 # 官方源（可直连 GitHub 环境）：
-curl -fsSL https://raw.githubusercontent.com/yuanyuanyuan430/workbuddy2api-hub/main/quick-deploy.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ardeyouxipianyi/workbuddy2api-hub/main/quick-deploy.sh | bash
 
 # 国内网络 / NAS 加速（Connection reset 时用）：
-curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/yuanyuanyuan430/workbuddy2api-hub/main/quick-deploy.sh | sudo bash
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/ardeyouxipianyi/workbuddy2api-hub/main/quick-deploy.sh | sudo bash
 ```
 
 NAS（如飞牛 fnOS）普通用户没有 Docker 权限时，把结尾的 `bash` 换成 `sudo bash`。再次运行同一条命令即平滑升级，账号与用量数据不受影响。
@@ -105,7 +105,7 @@ NAS（如飞牛 fnOS）普通用户没有 Docker 权限时，把结尾的 `bash`
 **部署模式**：默认 `lan`（`8788:8788`，局域网内可访问）。部署到公网服务器、或只想本机能连时，把环境变量放在管道后的 `bash` 前面：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yuanyuanyuan430/workbuddy2api-hub/main/quick-deploy.sh | WB_DEPLOY_MODE=public bash
+curl -fsSL https://raw.githubusercontent.com/ardeyouxipianyi/workbuddy2api-hub/main/quick-deploy.sh | WB_DEPLOY_MODE=public bash
 ```
 
 - `local` / `public` 只把宿主端口绑到 `127.0.0.1`，容器内仍是 `HOST=0.0.0.0`（Docker 转发需要）；
@@ -119,7 +119,7 @@ curl -fsSL https://raw.githubusercontent.com/yuanyuanyuan430/workbuddy2api-hub/m
 ```yaml
 services:
   wb-proxy:
-    image: ghcr.io/yuanyuanyuan430/workbuddy2api-hub:latest   # 或 yuanyuanyuan430/workbuddy2api-hub:latest
+    image: ghcr.io/ardeyouxipianyi/workbuddy2api-hub:latest   # 或 ardeyouxipianyi/workbuddy2api-hub:latest
     container_name: wb-proxy
     restart: unless-stopped
     ports:
@@ -161,10 +161,10 @@ docker run -d --name wb-proxy-watchtower --restart unless-stopped \
   ```bash
   docker run -d --name wb-proxy --restart unless-stopped -p 8788:8788 \
     -v $(pwd)/accounts:/app/accounts -v $(pwd)/usage:/app/usage \
-    ghcr.io/yuanyuanyuan430/workbuddy2api-hub:latest
+    ghcr.io/ardeyouxipianyi/workbuddy2api-hub:latest
   ```
 - **鉴权**：容器以 `--lan` 启动，无显式 `API_KEY` 时自动生成 Key 写入 `./accounts/settings.json` 并打印在日志里：`docker compose logs wb-proxy | grep -i "api key"`；
-- **镜像名要带 registry**：写成 `yuanyuanyuan430/workbuddy2api-hub` 会去 Docker Hub 找并报 `pull access denied`，正确写法是 `ghcr.io/yuanyuanyuan430/workbuddy2api-hub:latest`（GHCR 公开包，拉取无需登录）；
+- **镜像名要带 registry**：写成 `ardeyouxipianyi/workbuddy2api-hub` 会去 Docker Hub 找并报 `pull access denied`，正确写法是 `ghcr.io/ardeyouxipianyi/workbuddy2api-hub:latest`（GHCR 公开包，拉取无需登录）；
 - **目录权限**：默认以 root（`0:0`）运行；想以宿主用户跑就设 `PUID` / `PGID`（或 `--user $(id -u):$(id -g)`），并确保两个挂载目录对该 uid 可写；
 - **健康检查**：镜像自带 `HEALTHCHECK`（每 30s 探一次 `/health`），`docker ps` 的 STATUS 列会显示 healthy / unhealthy；
 - **源码构建**：`docker compose -f docker-compose.build.yml up -d --build`。
@@ -181,7 +181,7 @@ python tests/run_all.py realm      # 只跑名字里含 realm 的
 - 211 个套件：157 个 Python + 54 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
 - 211 个套件：158 个 Python + 53 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
 - 211 个套件：157 个 Python + 54 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
-- 227 个套件：168 个 Python + 59 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
+- 226 个套件：167 个 Python + 59 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
 - 211 个套件：158 个 Python + 53 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
 - 211 个套件：157 个 Python + 54 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
 - 211 个套件：158 个 Python + 53 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
@@ -493,13 +493,7 @@ export ANTHROPIC_API_KEY="你在看板设置中添加并绑定的API_Key"
 
 <!-- 发版时：把下面的 Unreleased 段落整理成新版本号（## vX.Y.Z），整体移入 docs/CHANGELOG.md 顶部 -->
 
-- **v1.7.36 已于 2026-10-24 发布**：本版把更新通道与部署产物从上游仓库改指本仓库 —— 在此之前，面板「一键更新」会把上游构建装回来，静默覆盖本维护线的修复。同时保留 `WB_UPDATE_REPO` 作为切换更新源与回滚的手段。完整变更与验证记录见 **[docs/CHANGELOG.md](docs/CHANGELOG.md#v1736)**；下一版的改动继续写在本段。
-
-- **v1.7.35 已于 2026-10-24 发布**：本版把国际版每日活跃在沙箱证书校验失败时降级到活跃上报（#645），并放开国际版的活跃上报能力；新开关默认关，升级后线上行为不变。完整变更与验证记录见 **[docs/CHANGELOG.md](docs/CHANGELOG.md#v1735)**；下一版的改动继续写在本段。
-
-- **v1.7.34 已于 2026-10-24 发布**：本版是日志通道的稳定性修复版，修掉「控制台写满管道打死整条请求链路」（#642）以及随之引入的「退出时进程被中止」回归，并把一条平台相关的测试断言改成平台无关。完整变更与验证记录见 **[docs/CHANGELOG.md](docs/CHANGELOG.md#v1734)**；下一版的改动继续写在本段。
-
-- **v1.7.33 已于 2026-10-23 发布**：本版集成 #630、#632、#635、#638，并自本版起进入低频维护。完整变更与验证记录见 **[docs/CHANGELOG.md](docs/CHANGELOG.md#v173)**；下一版的改动继续写在本段。
+- **v1.8.0 发布**：汇总 v1.7.33 之后的 #640、#642、#643、#645/#647，并补齐 #578、#618、#625 的发布记录。完整变更、验证范围与已知限制见 **[docs/CHANGELOG.md](docs/CHANGELOG.md#v180)**；下一版的改动继续写在本段。
 - **修正 CN 专属模型判定，并给 OpenCode 写入真实上下文上限**（#618 / #625）：`minimax-` 曾被当成整个模型家族的 CN 专属前缀，于是国际版也提供的 `minimax-m3.1-flash` 被本地 400 拦下。现在只保留确定的 CN 独占项（`deepseek-v4-pro*` 与显式 `minimax-m3`），同族其他模型按出口实际目录判断。OpenCode 一键配置此前只写空的模型条目，客户端只能回落到自己的 200k 默认值；现在把网关目录中的 `context_window` / `max_output` 写进 `limit.context` / `limit.output`，没有规格的条目仍保持空对象。新增回归覆盖。 / Narrow the China-only model gate and give OpenCode the real context limit (#618 / #625): `minimax-` used to mark the whole family as CN-exclusive, so the globally served `minimax-m3.1-flash` was refused locally with a 400. Only the confirmed China-only entries remain (`deepseek-v4-pro*` and the explicit `minimax-m3`); other members of the family follow the actual catalogue of the selected exit. OpenCode's one-click config used to write empty model entries, so it fell back to its own 200k default; the gateway's catalogue `context_window` / `max_output` now go into `limit.context` / `limit.output`, while entries without specs stay empty objects. Regression coverage added.
 - **流式回复在真实静默期发送 SSE 心跳**（#578）：上游思考期间可能长时间一个字节都不发，而客户端会把静默误判为断流；只在每次阻塞读之前检查心跳，恰好无法覆盖它。Chat、Responses 与 Anthropic Messages 三条流式路径现在共用后台 `SSEHeartbeat`：每 15 秒无写入就发送合法的 `: keepalive` 注释帧，与业务帧共用锁，保证不会截断 JSON；响应正常时不会多插帧，流结束后线程立即停止。新增 `tests/_test_stream_keepalive.py`（9 项，含读线程阻塞期间仍收到心跳与并发写入完整性），并复跑流式 id、usage 帧、断流错误帧与重试套件。 / Keep SSE streams alive through real upstream silence (#578): while the model is thinking the upstream may send nothing for longer than the client's idle window, and checking a heartbeat only before the next blocking read cannot cover that gap. Chat, Responses and Anthropic Messages now share a background `SSEHeartbeat`: after 15 idle seconds it writes a valid `: keepalive` comment frame under the same lock as application writes, so JSON frames cannot be split; responsive streams gain no extra frames and the thread stops as soon as the stream ends. Added `tests/_test_stream_keepalive.py` (9 checks, including heartbeat delivery while the reader is blocked and write integrity under contention), and re-ran the stream id, usage-frame, abort-frame and retry suites.
 
@@ -591,7 +585,7 @@ export ANTHROPIC_API_KEY="你在看板设置中添加并绑定的API_Key"
 - **DSH 一键配置放宽限流重试，修掉「对话到一半链接中断」**：WorkBuddy 的 429 冷却通常约一分钟，而 DSH 的默认 `retryPolicy` 是 `normal` / 最多 5 次 / 退避 500ms 起翻倍、封顶 10s——加起来不到 16 秒就放弃，冷却还没结束回合就以 `RATE_LIMIT` 失败。一键配置现在给 `wb-proxy` 单独写 `retryPolicy: {mode: normal, maxRetries: 8, backoff: {initialDelayMs: 2000, maxDelayMs: 30000, jitterRatio: 0.1}}`（合计约 2 分半），只影响 `wb-proxy`，其它 provider 仍用默认策略；字段与取值按 `@deepseek-ai/dsh-llm` 的 `RetryPolicySchema`。已经接入过的机器重新点一次「一键配置」即可补上这段（幂等），重启 DSH 生效。
   DSH's default per-provider retry policy (normal, at most 5 retries, 500ms→10s backoff, under 16 seconds in total) gives up before WorkBuddy's ~60s rate-limit cooldown ends, so the turn dies with `RATE_LIMIT` — which the user sees as the conversation breaking mid-flight. The one-click config now writes a wider `retryPolicy` for `wb-proxy` only (8 retries, 2s initial delay, 30s cap, ~2.5 minutes in total); other providers keep the default policy. Field names and bounds follow `@deepseek-ai/dsh-llm`'s `RetryPolicySchema`. Re-running the one-click config on an already-integrated machine adds it idempotently, and a DSH restart applies it.
 
-已发布版本的完整记录（v1.4.5 ~ v1.7.36，含每版的 PR 归属）见 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
+已发布版本的完整记录（v1.4.5 ~ v1.8.0，含每版的 PR 归属）见 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。
 
 ## 七、致谢与引用声明 (Credits & References)
 

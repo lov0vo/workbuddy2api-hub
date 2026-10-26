@@ -15,7 +15,6 @@ Launchers: start-wb-proxy.bat / start-wb-proxy-lan.bat on Windows,
 start-wb-proxy.command (or ./start-wb-proxy.sh) on macOS/Linux.
 """
 import argparse
-import atexit
 import base64
 import bisect
 import calendar
@@ -27,8 +26,10 @@ import io
 import ipaddress
 from collections import deque
 import re
+import atexit
 import json
 import os
+import queue
 import random
 # 单请求体上限。默认值从 50MB 收紧到 16MB，是「内存护栏」：body 先整体读成 bytes、
 # 再 decode 成 str、再 json.loads 成对象，实测 50MB body 的 decode+parse 峰值约
@@ -267,9 +268,8 @@ def install_console_close_handler():
                     sys.stdout.flush()
                 except Exception:
                     pass
-                # 同 _bye：os._exit 跳过 atexit，daemon 写线程必须先收掉。
                 try:
-                    _stop_console_writer(0.5)
+                    flush_log_channel(0.5)   # 已入队的行尽力落盘，卡住也不拖延退出
                 except Exception:
                     pass
                 os._exit(0)
@@ -10240,7 +10240,7 @@ def runtime_settings_view():
         "accounts_dir": ACCOUNTS_DIR,
         "usage_dir": USAGE_DIR,
         "settings_file": wb_settings.settings_path(ACCOUNTS_DIR),
-        "version": "1.7.36",
+        "version": "1.8.0",
     }
 def current_account():
     """Account used for display purposes (health / usage summaries)."""
@@ -10576,187 +10576,131 @@ def add_log_entry(msg, level=None, tag=None):
         LOG_STORE.append(entry)
     return entry
 
-# ------------------------------------------- 控制台日志：永不阻塞调用线程
-# log() 在 send_response() 之前被调用（log_request -> log_message -> log），所以
-# 写 stderr 一旦**阻塞**，代价和写失败完全不同：那一次请求的响应头永远发不出去，
-# 而 /health /realm /panel/status 因为在 log_message 静默白名单里照常 200。
+# ---------------------------------------------------------------------------
+# stderr 日志通道：请求线程只入队，真正的 stderr 写入交给唯一的后台线程。
 #
-# 写失败（EPIPE）早被 try/except 吃掉；写阻塞不行——管道写端在缓冲满时就是原地
-# 等读端，没有任何可抓的异常（#642：启动终端被回收成一个没人读的管道后，累计约
-# 50~100 个带访问日志的请求，除三个免日志端点外全部空响应）。
+# #489 处理的是「写 stderr 会抛异常」（启动终端被回收 → OSError）。还有一种形态它
+# 盖不住：stderr 接到「有人建、没人读」的管道时，写满约 64KB 后 write() 会**永久
+# 阻塞且不抛异常**，try/except 拦不住。而 send_response() 会先调 log_request()，
+# 于是所有不在 log_message 静默白名单里的端点一起停摆，/health /realm /panel/status
+# 却照常 200 —— 外部看起来「服务健在、只有面板坏了」，实际请求线程全停在 log()。
 #
-# 所以真实文件描述符的写交给后台线程：请求路径只入队，队列有界（满则丢弃并计数），
-# 后台线程怎么被卡住都只是它自己卡住。非 fd 的流（测试注入的 StringIO、被替换的
-# 包装对象）没有阻塞风险，仍同步写，语义与既有用例一致。
-_CONSOLE_QUEUE_MAX = 512
-_CONSOLE_QUEUE = deque()
-_CONSOLE_COND = threading.Condition()
-_CONSOLE_WRITER = None
-_CONSOLE_DROPPED = 0
-_CONSOLE_INFLIGHT = 0
-_CONSOLE_STOP = False
+# Request threads only enqueue; a single daemon thread owns stderr. If that write ever
+# blocks, only the writer parks: requests keep flowing and the queue drops lines (with a
+# counter surfaced through the panel log buffer) instead of wedging every endpoint.
+# ---------------------------------------------------------------------------
+_LOG_QUEUE_MAX = 2000
+_LOG_QUEUE = queue.Queue(maxsize=_LOG_QUEUE_MAX)
+_LOG_WRITER = None
+_LOG_WRITER_LOCK = threading.Lock()
+_LOG_DROPPED = 0
+_LOG_STREAM_CLOSED = False
+_LOG_SHUTTING_DOWN = False
+_LOG_ATEXIT_REGISTERED = False
 
 
-def _console_write_now(line):
-    """真正落到控制台的那一下：失败一律吞掉，绝不外抛。
-
-    有真实 fd 时走 os.write，不碰 sys.stderr 那个 _io.BufferedWriter。原因不是
-    性能：后台写线程一旦在解释器 finalize 阶段还攥着 stderr 缓冲对象的锁，
-    CPython 会直接 `Fatal Python error: _enter_buffered_busy` 中止进程（实测写完
-    5 行日志立刻退出，6/6 次 SIGABRT，退出码 -6）。os.write 只经内核，不参与那把
-    锁，退出干净。非 fd 的流（测试注入的 StringIO）没有这条路径，仍照常 write。
-
-    行可能长于管道原子写上限（PIPE_BUF），所以按返回值推进，短写就继续。
-
-    唯一的例外是 Windows 的**交互式控制台**：那是一条 WriteConsoleW 通道，绕过
-    TextIOWrapper 直接写字节会按当前代码页解释，中文日志变成问号。但控制台是有人
-    在看的，写不会无限期不返回，持锁风险也就没有；这条分支继续用 stream.write。
-    重定向到管道/文件的 Windows 进程仍走 os.write（那才是会堵死的情形）。
-    """
-    try:
-        stream = sys.stderr
-        if stream is None:
-            return
+def _log_writer_loop():
+    """唯一的 stderr 写者：阻塞也只阻塞它自己（daemon，随进程退出）。"""
+    global _LOG_STREAM_CLOSED
+    while True:
+        line = _LOG_QUEUE.get()
         try:
-            raw_ok = not (os.name == "nt" and stream.isatty())
-            fd = stream.fileno() if raw_ok else None
-        except Exception:
-            fd = None
-        if fd is None:
-            stream.write(line)
-            stream.flush()
-            return
-        view = memoryview(line.encode("utf-8", "replace"))
-        while view:
-            try:
-                written = os.write(fd, view)
-            except InterruptedError:
-                continue
-            if written <= 0:
+            if line is None:
                 return
-            view = view[written:]
+            if _LOG_STREAM_CLOSED:
+                continue
+            stream = sys.stderr
+            if stream is None:
+                # pythonw / 无控制台时并不总是可写对象，别再逐行试
+                _LOG_STREAM_CLOSED = True
+                continue
+            try:
+                stream.write(line)
+                stream.flush()
+            except Exception:
+                # 读端消失 / 终端被回收：放弃控制台通道，buffer 与日志库照常
+                _LOG_STREAM_CLOSED = True
+        finally:
+            _LOG_QUEUE.task_done()
+
+
+def _ensure_log_writer():
+    global _LOG_WRITER, _LOG_ATEXIT_REGISTERED
+    writer = _LOG_WRITER
+    if writer is not None and writer.is_alive():
+        return writer
+    with _LOG_WRITER_LOCK:
+        if _LOG_WRITER is None or not _LOG_WRITER.is_alive():
+            worker = threading.Thread(target=_log_writer_loop, name="log-writer",
+                                      daemon=True)
+            worker.start()
+            _LOG_WRITER = worker
+            if not _LOG_ATEXIT_REGISTERED:
+                # 解释器退出前先让写线程收手。daemon 线程在 finalize 阶段还攥着
+                # stderr 的缓冲锁时，CPython 会以 `_enter_buffered_busy` 直接中止
+                # 进程 —— 套件里表现为「测试全 OK、退出码非零」，短命的 CLI 进程
+                # （例如 console_tail）也会踩到。实测：不加这一层，60 行日志后立刻
+                # 退出连续 6/6 次中止；加上后 10/10 干净退出。
+                atexit.register(_stop_log_writer)
+                _LOG_ATEXIT_REGISTERED = True
+    return _LOG_WRITER
+
+
+def _stop_log_writer(timeout=0.5):
+    """atexit：尽力写完已入队的行，再让写线程自己退出（不让它拖住 finalize）。"""
+    global _LOG_SHUTTING_DOWN
+    flush_log_channel(timeout)
+    _LOG_SHUTTING_DOWN = True
+    writer = _LOG_WRITER
+    if writer is None or not writer.is_alive():
+        return
+    try:
+        _LOG_QUEUE.put_nowait(None)          # 叫醒它：写线程见到 None 就返回
+    except queue.Full:
+        pass                                 # 队列满＝它正卡在写里，join 会超时
+    try:
+        writer.join(max(0.05, float(timeout)))
     except Exception:
         pass
 
 
-def _console_drain():
-    """后台唯一的控制台写者：被读端卡住时只是它自己卡住。"""
-    global _CONSOLE_DROPPED, _CONSOLE_INFLIGHT
-    while True:
-        with _CONSOLE_COND:
-            # 丢弃计数本身也是待写内容：队列排空之后如果还有没报的丢弃，要立刻补
-            # 一条说明再睡。事故末尾那一批丢行往往再没有后续日志把写者叫醒，只等
-            # “下一行到来时再报” 会让计数永远埋着不报。
-            while not _CONSOLE_QUEUE and not _CONSOLE_DROPPED and not _CONSOLE_STOP:
-                _CONSOLE_COND.wait()
-            if _CONSOLE_STOP and not _CONSOLE_QUEUE:
-                # 停写：把还没报的丢弃计数补完就退出，剩下的行由 _console_flush
-                # 之后的进程收尾放弃（控制台本来就已经不可用了）。
-                if not _CONSOLE_DROPPED:
-                    _CONSOLE_COND.notify_all()
-                    return
-            if _CONSOLE_DROPPED:
-                lost, _CONSOLE_DROPPED = _CONSOLE_DROPPED, 0
-                _CONSOLE_QUEUE.appendleft(
-                    "[wb-proxy] console log: 读端跟不上，丢弃了 %d 行（看板日志照常完整）\n"
-                    % lost)
-            line = _CONSOLE_QUEUE.popleft() if _CONSOLE_QUEUE else None
-            if line is not None:
-                # 写之前先登记"有一行正在写"：flush 只认队列空是不够的——写线程可能
-                # 已经把最后一行取走、正卡在内核里，此时退出就会漏掉那一行。
-                _CONSOLE_INFLIGHT += 1
-        if line is not None:
-            try:
-                _console_write_now(line)
-            finally:
-                with _CONSOLE_COND:
-                    _CONSOLE_INFLIGHT -= 1
-                    _CONSOLE_COND.notify_all()
+def flush_log_channel(timeout=0.5):
+    """退出前尽力把已入队的行写完；写卡住时最多等 timeout 秒，绝不为日志拖延退出。
 
-
-def _console_enqueue(line):
-    global _CONSOLE_WRITER, _CONSOLE_DROPPED
-    with _CONSOLE_COND:
-        if len(_CONSOLE_QUEUE) >= _CONSOLE_QUEUE_MAX:
-            # 丢最旧的一条而不是新来的：控制台看的是"最近发生了什么"，与看板
-            # LOG_BUFFER 的 maxlen 语义一致（都是挤掉最旧）。ring 满了以后仍能
-            # 看到最新一行，事故现场更容易读。
-            _CONSOLE_QUEUE.popleft()
-            _CONSOLE_DROPPED += 1
-        _CONSOLE_QUEUE.append(line)
-        if _CONSOLE_WRITER is None:
-            _CONSOLE_WRITER = threading.Thread(
-                target=_console_drain, name="wb-console-log", daemon=True)
-            _CONSOLE_WRITER.start()
-        _CONSOLE_COND.notify()
-
-
-def _console_stream_is_file(stream):
-    """真实文件描述符才可能阻塞；StringIO 之类永远不阻塞。"""
+    判据用 `unfinished_tasks`（入队 +1、写完 -1）而不是 `empty()`：写线程 `get()`
+    取下最后一行后队列就已经空了，但它可能还在 `write()` 里 —— 退出时漏掉那一行
+    的正是这个窗口。卡住的管道同样只让这里等到 timeout。
+    """
     try:
-        stream.fileno()
-        return True
-    except Exception:
-        return False
-
-
-def _console_log(line):
-    """把一行交给控制台；返回前绝不等待读端。"""
-    stream = sys.stderr
-    if stream is None:
+        deadline = time.time() + max(0.0, float(timeout))
+    except (TypeError, ValueError):
         return
-    if not _console_stream_is_file(stream):
-        _console_write_now(line)
-        return
-    _console_enqueue(line)
-
-
-def _console_flush(timeout=1.0):
-    """退出前尽力把队列写完；控制台已死时最多等 timeout 秒。
-
-    判据是「队列空 + 没有正在写的那一行」，不是「队列空」：写线程可能已经把最后
-    一行取走、正卡在内核里，只看队列就会漏掉它（退出时丢最后几行日志）。
-    """
-    end = time.time() + timeout
-    while time.time() < end:
-        with _CONSOLE_COND:
-            if not _CONSOLE_QUEUE and not _CONSOLE_DROPPED and not _CONSOLE_INFLIGHT:
-                return
-        time.sleep(0.05)
-
-
-def _stop_console_writer(timeout=1.0):
-    """退出前的收尾：先写完积压，再让写线程自己退出。
-
-    这一步是防 CPython 在 finalize 阶段中止进程：后台写线程是 daemon，若解释器
-    开始收尾时它还攥着 sys.stderr 那个 BufferedWriter 的锁，CPython 直接
-    `Fatal Python error: _enter_buffered_busy` 并 SIGABRT（Windows 上同样）。让
-    线程在收尾前写完并退出，锁就没人持有了。
-
-    POSIX 上写走 os.write 本来就不参与那把锁，这里是双保险；Windows 上写仍走
-    stream.write（控制台编码），这一层是唯一的保险。
-    """
-    global _CONSOLE_STOP
-    _console_flush(timeout)
-    with _CONSOLE_COND:
-        _CONSOLE_STOP = True
-        writer = _CONSOLE_WRITER
-        _CONSOLE_COND.notify_all()
-    if writer is None or not writer.is_alive():
-        return
-    writer.join(min(timeout, 0.5))
-
-
-# 正常退出（main 返回、未捕获异常、os._exit 之外的所有路径）都必须先收写线程。
-# 注册在模块级而不是 main() 里：套件直接 import 本模块，退出的行为要和线上一致。
-atexit.register(_stop_console_writer)
+    while time.time() < deadline:
+        if _LOG_STREAM_CLOSED or not _LOG_QUEUE.unfinished_tasks:
+            return
+        time.sleep(0.01)
 
 
 def log(msg, level=None, tag=None):
-    # 控制台 stderr 与看板 buffer 同源脱敏。控制台这一路可丢：写不进去不影响请求
-    # （见 _console_log），buffer / 日志库那一路照常完整。
-    _console_log("[wb-proxy] %s %s\n" % (time.strftime("%H:%M:%S"),
-                                        _mask_text(str(msg))))
+    # 控制台 stderr 与看板 buffer 同源脱敏。写入交给后台线程（见 _log_writer_loop）：
+    # 队列满只丢行并计数，绝不在请求线程里阻塞，也绝不让日志通道打死请求。
+    global _LOG_DROPPED
+    if _LOG_SHUTTING_DOWN:
+        # 退出途中写线程已收手：只进 buffer / 日志库，不再往队列里放
+        add_log_entry(msg, level=level, tag=tag)
+        return
+    _ensure_log_writer()
+    line = f"[wb-proxy] {time.strftime('%H:%M:%S')} {_mask_text(str(msg))}\n"
+    try:
+        _LOG_QUEUE.put_nowait(line)
+    except queue.Full:
+        _LOG_DROPPED += 1
+        if _LOG_DROPPED == 1 or _LOG_DROPPED % 1000 == 0:
+            # 只进 buffer / 日志库，不再走 stderr：那条路已经堵住了
+            add_log_entry("stderr log channel is blocked; %d line(s) dropped so far"
+                          % _LOG_DROPPED, level="WARN", tag="system")
+    except Exception:
+        pass
     add_log_entry(msg, level=level, tag=tag)
 
 # 本地网路工具的多引擎轮换、冷却与失败分类写进看板日志（tag=webtools）
@@ -18253,7 +18197,7 @@ class Handler(BaseHTTPRequestHandler):
             super().finish()
         except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
             pass
-    server_version = "wb-proxy/1.7.36"
+    server_version = "wb-proxy/1.8.0"
     def log_message(self, fmt, *args):
         # 静默过滤前端看板高频定时心跳的正常 200 GET 请求（/logs、/usage、/accounts 轮询等）
         # 避免自增死循环刷屏与日志污染。遇 4xx/5xx 异常或所有非 GET 业务操作依然如实记录。
@@ -18948,9 +18892,10 @@ class Handler(BaseHTTPRequestHandler):
                 sys.stdout.flush()
             except Exception:
                 pass
-            # os._exit 跳过 atexit，写线程得在这里收：否则解释器带着 daemon
-            # 线程收尾，CPython 会以 _enter_buffered_busy 中止进程。
-            _stop_console_writer(0.5)
+            try:
+                flush_log_channel(0.5)   # 已入队的行尽力落盘，卡住也不拖延退出
+            except Exception:
+                pass
             os._exit(0)
         threading.Thread(target=_bye, daemon=True).start()
         return self._json(200, {"ok": True, "shutting_down": True})
@@ -23195,10 +23140,6 @@ def _serve_forever(args):
             server.server_close()
         except Exception:
             pass
-        # 退出前收掉控制台写线程：先尽力写完积压，再让线程退出，避免解释器
-        # finalize 时 daemon 线程还攥着 stderr 的缓冲锁（那会让 CPython 以
-        # _enter_buffered_busy 中止进程）。读端已死时最多各等 1 秒。
-        _stop_console_writer()
 
 if __name__ == "__main__":
     # pythonw (GUI subsystem) starts with sys.stdout/sys.stderr == None; any
