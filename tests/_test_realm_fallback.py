@@ -224,5 +224,42 @@ class PanelTests(unittest.TestCase):
                              % phrase)
 
 
+class ModelVariantTests(unittest.TestCase):
+    """跨出口回退时把国际版专属的 -sg 变体换回普通名。
+
+    国内版没有 deepseek-v4.1-flash-sg 这条模型，回退到 cn 出口还带着 -sg 会被
+    上游回 11102 service info not found。
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        sys.path.insert(0, HERE)
+        import wb_proxy
+        cls.proxy = wb_proxy
+
+    def test_cn_rewrites_paid_variant(self):
+        self.assertEqual(
+            self.proxy._realm_model_variant("cn", "deepseek-v4.1-flash-sg"),
+            "deepseek-v4.1-flash")
+
+    def test_intl_keeps_paid_variant(self):
+        self.assertEqual(
+            self.proxy._realm_model_variant("intl", "deepseek-v4.1-flash-sg"),
+            "deepseek-v4.1-flash-sg")
+
+    def test_other_models_pass_through(self):
+        for model in ("deepseek-v4.1-flash", "glm-5.3", ""):
+            self.assertEqual(
+                self.proxy._realm_model_variant("cn", model), model)
+
+    def test_replay_rewrites_payload_and_prebuilt_body(self):
+        """只改 payload 不够：/v1/chat/completions 是带着 prebuilt_body 进来的。"""
+        with open(os.path.join(HERE, "wb_proxy.py"), encoding="utf-8") as fh:
+            source = fh.read()
+        self.assertIn("_realm_model_variant(backup, payload.get(\"model\"))", source)
+        self.assertIn('prebuilt[\"model\"] = variant', source)
+        self.assertIn('kwargs[\"prebuilt_body\"] = prebuilt', source)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

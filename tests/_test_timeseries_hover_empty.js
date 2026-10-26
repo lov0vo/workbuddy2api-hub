@@ -44,14 +44,16 @@ function callHandler(state) {
   const expr = hoverSource();
   const fn = new Function(
     'seriesLayout', 'cv', 'padL', 'gap', 'n', 'series', 'tip', 'step',
-    'fmtDate', 'fmtTime', 'fmtCompact', 'window',
+    'fmtDate', 'fmtTime', 'fmtCompact', 'window', 'paintHover',
     'return (' + expr + ');'
   );
   const handler = fn(
     state.seriesLayout, state.cv, state.padL, state.gap, state.n, state.series,
     state.tip, state.step,
     (v) => 'D' + v, (v) => 'T' + v, (v) => String(v),
-    { innerWidth: 1280 }
+    { innerWidth: 1280 },
+    // 悬停标记画在叠加画布上，和 tooltip 是两件事；这里只要它在作用域里
+    () => {}
   );
   handler({ clientX: 40, clientY: 20 });
 }

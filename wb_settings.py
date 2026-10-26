@@ -1328,6 +1328,19 @@ def model_aliases(accounts_dir):
     """Read the operator-maintained model alias table."""
     raw = load(accounts_dir).get(MODEL_ALIASES_KEY)
     return _clean_model_aliases(raw)
+
+
+def set_model_aliases(accounts_dir, raw):
+    """Replace the alias table. An empty/invalid table drops the key."""
+    clean = _clean_model_aliases(raw)
+    with _lock:
+        data = load(accounts_dir)
+        if clean:
+            data[MODEL_ALIASES_KEY] = clean
+        else:
+            data.pop(MODEL_ALIASES_KEY, None)
+        save(accounts_dir, data)
+    return clean
 # 清单写进客户端配置后会被逐条展开；200 条已远超任何出口的模型数，上限只挡
 # 手编 settings.json 把客户端配置撑爆。
 MAX_AGENT_MODELS = 200

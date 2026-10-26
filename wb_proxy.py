@@ -10169,6 +10169,7 @@ def runtime_settings_view():
         "auto_switch_product": wb_settings.auto_switch_product(ACCOUNTS_DIR),
         "auto_switch_products": wb_settings.auto_switch_products(ACCOUNTS_DIR),
         "free_model_credit_fallback": wb_settings.free_model_credit_fallback(ACCOUNTS_DIR),
+        "model_aliases": wb_settings.model_aliases(ACCOUNTS_DIR),
         "enable_anthropic_messages": wb_settings.enable_anthropic_messages(ACCOUNTS_DIR),
         "filter_models_by_key": wb_settings.filter_models_by_key(ACCOUNTS_DIR),
         "reasoning_effort_map": wb_settings.reasoning_effort_map(ACCOUNTS_DIR),
@@ -14442,6 +14443,19 @@ _FREE_MODEL_CREDIT_FALLBACKS = {
     ("intl", "deepseek-v4.1-flash"): "deepseek-v4.1-flash-sg",
 }
 
+#: 跨出口回退时要顺手换掉的模型名：``-sg`` 是国际版专属的付费变体，国内版没有
+#: 这条模型（上游回 11102 service info not found），落到 cn 出口就换回普通名。
+_REALM_MODEL_VARIANTS = {
+    ("cn", "deepseek-v4.1-flash-sg"): "deepseek-v4.1-flash",
+}
+
+
+def _realm_model_variant(realm, model):
+    name = (model or "").strip()
+    if not name:
+        return model
+    return _REALM_MODEL_VARIANTS.get((str(realm or ""), name), name)
+
 
 def _free_model_credit_fallback_enabled():
     if wb_settings.free_model_credit_fallback(ACCOUNTS_DIR):
@@ -15197,6 +15211,21 @@ def open_upstream_with_fallback(payload, session_key=None, target_realm=None,
         if not str(exc).startswith("no usable account"):
             raise
         backup = _backup_or_raise(exc)
+    # 跨出口时模型名要跟着出口改：-sg 变体是国际版专属的付费版，国内版没有这条
+    # 模型（上游回 11102 service info not found）。注意 /v1/chat/completions 在进
+    # 本函数前已经把上游 body build 好并以 prebuilt_body 传进来，只改 payload
+    # 发出去的仍是原来的模型名，所以两边都要改。
+    variant = _realm_model_variant(backup, payload.get("model"))
+    if variant != (payload.get("model") or ""):
+        log("realm fallback: model %s -> %s for the %s exit"
+            % (payload.get("model") or "-", variant, backup))
+        payload = dict(payload)
+        payload["model"] = variant
+        prebuilt = kwargs.get("prebuilt_body")
+        if isinstance(prebuilt, dict) and "model" in prebuilt:
+            prebuilt = dict(prebuilt)
+            prebuilt["model"] = variant
+            kwargs["prebuilt_body"] = prebuilt
     # 第二次尝试的失败原样抛出：两边都限流时，客户端该等多久由**国内版**给出的
     # 重置时钟决定，那比国际版那条更接近「下一次能成」的时刻。
     return open_upstream(payload, session_key=session_key,
@@ -19901,6 +19930,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._error(400, "free_model_credit_fallback must be true or false", "invalid_request_error")
             wb_settings.set_free_model_credit_fallback(ACCOUNTS_DIR, raw)
             reply["free_model_credit_fallback"] = raw
+        if "model_aliases" in payload:
+            # 面板上的「deepseek-v4.1-flash 使用版本」选择器写的就是这张表：
+            # 空表 = 免费版，{"deepseek-v4.1-flash": "deepseek-v4.1-flash-sg"} = 付费版。
+            raw = payload.get("model_aliases")
+            if raw is not None and not isinstance(raw, (dict, list)):
+                return self._error(400, "model_aliases must be an object, an array or null",
+                                   "invalid_request_error")
+            reply["model_aliases"] = wb_settings.set_model_aliases(ACCOUNTS_DIR, raw)
         if "auto_switch_product" in payload:
             # Strictly a JSON boolean: a string like "false" would be truthy and
             # silently switch the feature on, which is the one thing an operator

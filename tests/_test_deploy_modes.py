@@ -45,12 +45,12 @@ class DeployModeTests(unittest.TestCase):
     def test_deploy_defaults_pull_the_image_this_repo_builds(self):
         # 部署产物（compose / 一键脚本 / 面板页头链接）必须指向本仓库：
         # 指向上游会让「装好之后点一键更新」把上游构建覆盖回来。
-        image = "ghcr.io/yuanyuanyuan430/workbuddy2api-hub:latest"
+        image = "ghcr.io/ardeyouxipianyi/workbuddy2api-hub:latest"
         self.assertIn("    image: " + image, read("docker-compose.yml"))
         self.assertIn("    image: " + image, self.script)
         self.assertIn("\n    " + image, self.readme)
         self.assertIn(
-            'href="https://github.com/yuanyuanyuan430/workbuddy2api-hub"',
+            'href="https://github.com/ardeyouxipianyi/workbuddy2api-hub"',
             read("dashboard.html"))
 
     def test_public_mode_explains_the_reverse_proxy_requirement(self):

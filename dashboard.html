@@ -10,7 +10,18 @@
      有令牌 → 先隐藏闸门，交给 bootPanel() 用 /panel/status 复核；令牌过期或网关
      重启导致复核失败时，panelNeedsLogin() 会摘掉这个类把闸门放回屏幕上。
      这里必须 !important：闸门的可见性写在它自己的内联 style 上，普通规则压不住。 -->
-<style>html.wb-panel-session #panelGate{display:none!important}</style>
+<style>html.wb-panel-session #panelGate{display:none!important}
+/* ===== 2026-10-25 表格体验统一 =====
+   表头钉在顶部（跟随页面滚动），只有数据行滚动；不再依赖内层滚动容器，
+   所以表格下方不会再多出一大片空白，也不会出现第二根滚动条。 */
+
+.modal thead th{top:0}
+/* 滚动时数据行从表头下方穿过，表头必须不透明 */
+table thead tr{background:var(--panel2)}
+table thead th{background:var(--panel2)}
+/* 2026-10-25：滚动条要保留可见（用户要求表头固定，不是删掉滚动条）。 */
+body.theme-light table thead th{background:var(--panel2)}
+</style>
 <script>
 /* 面板会话令牌的存储键。全页只在这里定义一次：首帧判定要用它，所以必须先于
    任何页面内容；后面的脚本直接复用这个绑定，不要再写一遍字面量。 */
@@ -99,11 +110,10 @@ main{padding:20px var(--page-pad) 60px;max-width:2000px;margin:0 auto}
 /* Claude 风格统一（2026-10-14）：原生控件与滚动条着暖色 */
 input[type="checkbox"],input[type="radio"]{accent-color:var(--accent)}
 ::selection{background:var(--accent-soft)}
-*{scrollbar-width:thin;scrollbar-color:var(--line-hover) transparent}
-::-webkit-scrollbar{width:10px;height:10px}
-::-webkit-scrollbar-thumb{background:var(--line-hover);border-radius:8px;border:2px solid transparent;background-clip:content-box}
-::-webkit-scrollbar-thumb:hover{background-color:var(--dim-light);background-clip:content-box}
-::-webkit-scrollbar-track{background:transparent}
+/* 2026-10-25：滚动条保留系统原生样式。
+   注意 Chrome 121+ 只要元素上声明了 scrollbar-width（任何值，含 auto），
+   就会整体忽略 ::-webkit-scrollbar 系列 —— 所以这里干脆一条都不写，
+   让浏览器画它自己的滚动条，最稳、也最接近系统观感。 */
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:12px;margin-bottom:22px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 18px;box-shadow:var(--shadow);min-width:0}
 .card .k{color:var(--dim);font-size:12px;margin-bottom:6px;font-weight:500}
@@ -184,7 +194,7 @@ tbody tr:last-child td{border-bottom:none}
 tbody tr:hover{background:var(--panel2)}
 /* 表头排序。手型、箭头都是运行时挂到 <th> 上的（见 applyTableSort），源码标记
    一个字不动——积分扣减历史表的表头必须保持裸 <th>，有测试写死。 */
-th.sortable{position:relative;cursor:pointer;user-select:none;-webkit-user-select:none}
+th.sortable{cursor:pointer;user-select:none;-webkit-user-select:none}
 th.sortable:hover{color:var(--fg)}
 /* 表头可以 Tab 聚焦、回车/空格触发，焦点得看得见。用 focus-visible，鼠标点过
    之后不留一圈框。 */
@@ -259,13 +269,14 @@ table.account-cards td[data-label="账号"] .cool-list{display:flex;flex-directi
 table.account-cards td[data-label="账号"] .cool-pill{display:block;width:100%;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media (min-width:641px){
   table.account-cards{table-layout:fixed;min-width:1262px}
-  table.account-cards th:nth-child(2),table.account-cards td:nth-child(2){width:180px}
-  table.account-cards td.acct-actions{white-space:normal;min-width:232px;width:232px;position:sticky;right:0;z-index:2;background:var(--panel);box-shadow:-8px 0 12px -12px rgba(31,30,27,.55)}
+  table.account-cards th:nth-child(2),table.account-cards td:nth-child(2){width:160px}
+  table.account-cards td.acct-actions{white-space:normal;min-width:196px;width:196px;position:sticky;right:0;z-index:2;background:var(--panel);box-shadow:-8px 0 12px -12px rgba(31,30,27,.55)}
   table.account-cards th:last-child{position:sticky;right:0;z-index:3;background:var(--panel2);box-shadow:-8px 0 12px -12px rgba(31,30,27,.55)}
   table.account-cards tbody tr:hover td.acct-actions{background:var(--panel2)}
-  /* 操作区沿用原来的两行布局，不在窄列中再次折成三四行。 */
-  table.account-cards .acct-actions-col{min-width:max-content;max-width:none}
-  table.account-cards .acct-actions-row{flex-wrap:nowrap;max-width:none}
+  /* 操作区内容不再顶宽表格：放不下就在单元格内折行（原来 min-width:max-content
+     会把单元格撑到 236px，越过表格右缘、并撑出一条只能滚 28px 的空滚动条）。 */
+  table.account-cards .acct-actions-col{min-width:0;max-width:100%}
+  table.account-cards .acct-actions-row{flex-wrap:wrap;max-width:100%}
 }
 @media (max-width:640px){
   table.account-cards{min-width:0!important;table-layout:auto}
@@ -313,6 +324,73 @@ body.pricing-off #kpiCostCard{display:none}
   border:1px solid var(--line);border-radius:10px}
 .tb-group button.sec{box-shadow:none}
 .tb-group button.sec:hover{background:var(--panel3);border-color:var(--line-hover)}
+/* 账号区工具栏：一行到底，不换行。只认 #accountsBody —— 账号区在「合并/拆分」两种
+   模式下都会搬家，用 #pageAccounts 会失效；活动记录弹窗里的 .toolbar 不受影响。
+   放不下时可在这一条内横向滚动，但不显示滚动条（scrollbar-width:none）。 */
+#accountsBody .toolbar{flex-wrap:nowrap;gap:6px;overflow-x:auto;overflow-y:hidden;
+  padding-bottom:0;scrollbar-width:none;-ms-overflow-style:none}
+#accountsBody .toolbar::-webkit-scrollbar{height:0;display:none}
+/* nowrap + overflow 的 flex 容器会把子项压到 min-content（中文可任意断行 = 按钮被压扁、
+   文字竖排），所以显式禁止收缩并禁止折字。 */
+#accountsBody .toolbar>button,#accountsBody .toolbar>.tb-group{flex:0 0 auto}
+#accountsBody .toolbar button{white-space:nowrap;font-size:11px;padding:4px 7px}
+#accountsBody .toolbar .tb-group{gap:2px;padding:1px}
+/* 国内版「任务与福利」头部操作区：默认单行靠右；仅窗口不够宽时才换行。
+   作用域锁到 #sectionGrowthTasks，不波及同样用内联 flex 的其它区块。 */
+#sectionGrowthTasks #growthHeadActions{display:flex;flex-wrap:nowrap;gap:8px;align-items:center;
+  justify-content:flex-end;margin-left:auto;white-space:nowrap}
+@media (max-width:1200px){
+  #sectionGrowthTasks #growthHeadActions{flex-wrap:wrap;white-space:normal}
+}
+/* 账号表：容器内自适应，不再撑出 1262px 的横向滚动条。
+   table-layout:fixed 保留（列宽稳定），列宽按容器均分，账号列与操作列仍固定。 */
+@media (min-width:641px){
+  table.account-cards{table-layout:fixed;min-width:0;width:100%}
+}
+/* 签到与活跃记录右侧筛选：单行 + 按内容自适应，别把 4 个下拉框竖排成一大片空白。
+   注意：可见控件是 JS 增强出来的 .cs-wrap/.cs-trigger（原生 select 被 .cs-native 透明覆盖），
+   所以改 .slot-select 的宽度是无效的，必须改 .cs-wrap */
+#activityFilters{flex-wrap:nowrap}
+#activityFilters .cs-wrap{width:auto;flex:0 0 auto}          /* 覆盖 .cs-wrap.cs-block{width:100%} */
+#activityFilters .cs-trigger{width:auto}                     /* 触发条按文字宽度，不被压成 min-content */
+#activityFilters > button{flex:0 0 auto;white-space:nowrap}  /* 「刷新」恢复自然宽度，不折成两行 */
+@media (max-width:900px){
+  #activityFilters{flex-wrap:wrap}
+}
+/* 表格容器：宽屏 overflow-x:clip 不产生横条；窄窗(<1100px)退化成 overflow-x:auto，
+   那时需要横条，所以这里不再强制隐藏。 */
+/* 数据表格区块（账号列表 / 当前禁用 / 签到与活跃记录 / 最近请求 / 网关模型清单）：
+   表格自己成为滚动容器 —— 表头吸顶不动、数据区滚动、滚动条可见。
+   之前那版把滚动条整条画掉了，用户要的是「表头不随滚动移动」，不是「没有滚动条」。 */
+.main-page .table-wrap{
+  max-height:min(var(--table-max-h,620px),calc(100vh - var(--page-nav-top,84px) - 150px));
+  overflow:auto;overscroll-behavior:auto;
+  -webkit-overflow-scrolling:touch}
+/* 注意：这里**不能**写 scrollbar-width。Chrome 121+ 只要元素上出现 scrollbar-width
+   （哪怕值就是 auto），就整体忽略 ::-webkit-scrollbar 系列，退回 Fluent 覆盖式细条
+   —— 那正是用户说的「滚动条完全没有了」。不写它，下面的伪元素才画得出来。 */
+.main-page .table-wrap::-webkit-scrollbar{width:10px;height:10px}
+.main-page .table-wrap::-webkit-scrollbar-track{background:var(--panel2)}
+.main-page .table-wrap::-webkit-scrollbar-thumb{
+  background:var(--line-hover);border-radius:8px;
+  border:2px solid var(--panel2);background-clip:padding-box}
+.main-page .table-wrap::-webkit-scrollbar-thumb:hover{background:var(--dim)}
+.main-page .table-wrap::-webkit-scrollbar-corner{background:var(--panel2)}
+/* z-index 必须高过操作列的 sticky td（td.acct-actions 是 2、th:last-child 是 3），
+   否则行内按钮会压在表头上（账号表操作列特别明显）。这条选择器特异性 (0,2,3)
+   本来就盖过了 th:last-child 的 (0,2,2)，所以统一给 4。 */
+.main-page .table-wrap>table>thead th{
+  position:sticky;top:0;z-index:4;background:var(--panel2);
+  box-shadow:inset 0 -1px 0 var(--line),inset 0 1px 0 var(--line)}
+@media (max-width:860px){
+  .main-page .table-wrap{max-height:min(var(--table-max-h,620px),62vh)}
+}
+/* 日志终端与代码块保留系统原生滚动条（之前被一起画掉了）。 */
+#logTerminalBody,.collapse-inner,pre,code{scrollbar-width:auto}
+/* 账号列不再用省略号截断：名字与副信息允许折行，整行自然变高而不是切字。 */
+.acct-name-row{display:flex;align-items:center;gap:4px 6px;min-width:0;flex-wrap:wrap}
+.acct-name{font-weight:600;font-size:14px;color:var(--fg);min-width:0;overflow-wrap:anywhere}
+.acct-meta{color:var(--dim);font-size:11px;margin-top:1px;white-space:normal;overflow-wrap:anywhere;line-height:1.35}
 button{cursor:pointer;font:inherit;font-size:12px;font-weight:500;padding:6px 14px;border-radius:8px;
   border:1px solid var(--accent);background:var(--accent);color:#fff;box-shadow:var(--shadow-sm);transition:all .15s ease}
 button:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
@@ -1076,6 +1154,8 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 
 
 #pageAnalytics .chartbox{position:relative}
+/* 悬停标记画在叠加层上，基础图（seriesCanvas）的像素一个都不动 */
+#pageAnalytics #seriesHoverCanvas{position:absolute;left:0;top:0;pointer-events:none;display:block}
 #pageAnalytics canvas.series{width:100%;display:block}
 #pageAnalytics .tooltip{
   position:fixed;pointer-events:none;z-index:60;opacity:0;transition:opacity .1s ease;
@@ -1087,16 +1167,19 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 #pageAnalytics .tooltip .tt-r b{color:var(--fg);font-weight:600;font-variant-numeric:tabular-nums}
 
 
+/* 热力图格子尺寸：只改这两个变量即可整体缩放。
+   注意列宽由 JS 内联 gridTemplateColumns 决定（buildHeatGrid），所以 JS 也必须引用变量。 */
+#pageAnalytics{--hm-cell:12px;--hm-gap:2px}
 #pageAnalytics .hm-meta{font-size:10.5px;color:var(--dim)}
 #pageAnalytics .hm-scroll{overflow-x:auto;padding-bottom:2px}
 #pageAnalytics .hm-wrap{display:inline-flex;gap:7px}
-#pageAnalytics .hm-days{display:grid;grid-template-rows:repeat(7,10px);gap:2px;font-size:8.5px;color:var(--dim2);padding-top:13px}
-#pageAnalytics .hm-days span{height:10px;line-height:10px}
+#pageAnalytics .hm-days{display:grid;grid-template-rows:repeat(7,var(--hm-cell));gap:var(--hm-gap);font-size:8.5px;color:var(--dim2);padding-top:calc(var(--hm-cell) + 1px + var(--hm-gap))}
+#pageAnalytics .hm-days span{height:var(--hm-cell);line-height:var(--hm-cell)}
 #pageAnalytics .hm-cols{position:relative}
-#pageAnalytics .hm-months{display:grid;font-size:8.5px;color:var(--dim2);height:11px;margin-bottom:2px}
+#pageAnalytics .hm-months{display:grid;font-size:8.5px;color:var(--dim2);height:calc(var(--hm-cell) + 1px);margin-bottom:var(--hm-gap)}
 #pageAnalytics .hm-months span{grid-row:1;white-space:nowrap}
-#pageAnalytics .hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,10px);grid-auto-columns:10px;gap:2px}
-#pageAnalytics .hm-cell{width:10px;height:10px;border-radius:2px;cursor:pointer;transition:transform .1s ease}
+#pageAnalytics .hm-grid{display:grid;grid-auto-flow:column;grid-template-rows:repeat(7,var(--hm-cell));grid-auto-columns:var(--hm-cell);gap:var(--hm-gap)}
+#pageAnalytics .hm-cell{width:var(--hm-cell);height:var(--hm-cell);border-radius:2px;cursor:pointer;transition:transform .1s ease}
 #pageAnalytics .hm-cell:hover{transform:scale(1.3);outline:1px solid var(--fg2)}
 #pageAnalytics .hm-cell.l0{background:var(--hm0)}
 #pageAnalytics .hm-cell.l1{background:var(--hm1)}
@@ -1243,7 +1326,11 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   transform:translateY(-2px) rotate(45deg);transition:transform .18s ease,opacity .14s ease}
 .cs-trigger:hover .cs-arrow{opacity:.8}
 .cs-wrap.cs-open .cs-arrow{transform:translateY(1px) rotate(-135deg)}
-.cs-panel{position:absolute;z-index:80;top:calc(100% + 4px);left:0;min-width:100%;
+/* 面板走 top layer（popover），因为它的祖先里有 .table-wrap{overflow:auto}、
+   .collapse-inner{overflow:hidden}、.modal-bd{overflow:auto}，position:absolute 会被
+   直接裁掉；再叠加 body.win-capped 里 sticky 区块形成的层叠上下文，z-index 也压不出去。
+   坐标由 JS 的 positionPanel() 用触发器 rect 算成内联 left/top/bottom/max-height。 */
+.cs-panel{position:fixed;z-index:80;inset:auto;margin:0;color:inherit;min-width:0;
   max-width:min(320px,calc(100vw - 24px));max-height:min(320px,52vh);overflow:auto;
   background:var(--panel);border:1px solid var(--line);border-radius:10px;
   box-shadow:var(--shadow-md);padding:4px;
@@ -1251,7 +1338,11 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   transition:opacity .13s ease,transform .13s ease;
   scrollbar-width:thin}
 .cs-wrap.cs-open .cs-panel{opacity:1;transform:none;pointer-events:auto}
-.cs-wrap.cs-drop-up .cs-panel{top:auto;bottom:calc(100% + 4px);transform:translateY(4px) scale(.985)}
+/* 关闭状态的下拉面板虽然 opacity:0，但仍是 display:block 的绝对定位元素，
+   会把祖先滚动容器的 scrollHeight 撑大（账号表里那张「权重」下拉有 305px 高，
+   撑出 257px 空白），所以关闭时直接从布局里摘掉。 */
+.cs-wrap:not(.cs-open) .cs-panel{display:none}
+.cs-wrap.cs-drop-up .cs-panel{transform:translateY(4px) scale(.985)}
 .cs-wrap.cs-drop-up.cs-open .cs-panel{transform:none}
 .cs-opt{display:flex;align-items:center;gap:7px;padding:6px 9px;border-radius:7px;
   font-size:12px;color:var(--fg);cursor:pointer;white-space:nowrap;
@@ -1263,6 +1354,61 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 .cs-opt.cs-disabled.cs-hover{background:transparent}
 .cs-opt .cs-tick{flex:0 0 auto;width:11px;font-size:11px;opacity:0;color:var(--accent)}
 .cs-opt.cs-selected .cs-tick{opacity:1}
+/* ===== 表头吸附（2026-10-25 重做） =====
+   之前的写法有两个错：
+   1) .table-wrap{overflow-x:auto} 让表壳成了 sticky 的「最近可滚动祖先」，
+      而它自己永不纵向滚动 → top 值退化成「把表头往下推 N px」，浮在行中间；
+   2) top 用了 --page-nav-top(84px)，那是给页面级吸顶 header 用的，不是表头用的。
+   现在：表壳改用 overflow:clip（不建立滚动容器），sticky 参照落回 section/视口。 */
+.table-wrap{overflow-x:clip;overflow-y:visible}
+@supports not (overflow:clip){.table-wrap{overflow:hidden}}
+/* 普通模式：页面自己滚，表头贴住吸顶 header 下沿
+   （--page-nav-top = header 高 + 14px 跳转留白，减 14 才紧贴，不留缝） */
+thead th{position:sticky;top:0;z-index:2;background:var(--panel2)}
+/* 限高模式：section 自己是 scrollport，顶边即 section 顶边 → 0。
+   标题行也 sticky 在 0 会盖住表头，所以含表格的 section 放弃标题行吸顶。 */
+/* 限高模式：section 自己是 scrollport，顶边即 section 顶边 → 表头 top:0。
+   标题行原本也 sticky 在 0（:166），会盖住表头，所以让 section 的标题行让位。
+   注意这里不能只挑「含 .table-wrap 的 section」——模型清单/成长/积分表用的是
+   内联 overflow-x 裸壳，不匹配 .table-wrap，会被漏掉（表头就浮在行中间）。 */
+/* 用户要求：「删了滚动条的地方就别能滚」。
+   限高模式原来是 max-height + overflow-y:auto —— 条被隐藏了但内部照样能滚，
+   观感上就是「看着没滚动条，滚轮却在动」。改成不限高、不滚动，让整页滚。
+   这样 sticky 的参照统一变成视口，表头在所有模式下都能贴住吸顶栏。 */
+body.win-capped .main-page section{max-height:none!important;overflow:visible!important;padding-top:0}
+body.win-capped #pageAnalytics section.panel{max-height:none!important;overflow:visible!important}
+body.win-capped .main-page section:has(table)>:first-child{position:static;z-index:auto}
+/* border-collapse:collapse 下 sticky 单元格画不出边框，用内阴影补 */
+table thead th{box-shadow:inset 0 -1px 0 var(--line),inset 0 1px 0 var(--line)}.modal-bd thead th{top:0}
+/* ===== 该滚的地方把滚动条还回来（用户：删了条却还能滚，观感是坏的） =====
+   Chrome 只要元素上有非 auto 的 scrollbar-width 就忽略 ::-webkit-scrollbar，
+   所以这里只写 scrollbar-width:auto，绝不写 scrollbar-color。 */
+:is(.modal,.modal-bd,.page-sidebar,.page-nav,.cs-panel,#logTerminalBody,#tunerRows,#pageAnalytics .recent-list,#pageAnalytics .hm-scroll,#setDailyChatModelPickList,#promptPickerList,#quotaScanModels,#mdmList,#taskLogBox,[id^="editKeyModelList_"],[id^="editKeyAccountList_"],#pageAnalytics .pbody:has(>table),#pageAnalytics .fbody div:has(>table.data-cards)){scrollbar-width:auto!important;scrollbar-gutter:stable}
+:is(.modal,.modal-bd,.page-sidebar,.page-nav,.cs-panel,#logTerminalBody,#tunerRows,#pageAnalytics .recent-list,#pageAnalytics .hm-scroll,#setDailyChatModelPickList,#promptPickerList,#quotaScanModels,#mdmList,#taskLogBox,[id^="editKeyModelList_"],[id^="editKeyAccountList_"],#pageAnalytics .pbody:has(>table),#pageAnalytics .fbody div:has(>table.data-cards))::-webkit-scrollbar{width:10px!important;height:10px!important;display:block!important}
+:is(.modal,.modal-bd,.page-sidebar,.page-nav,.cs-panel,#logTerminalBody,#tunerRows,#pageAnalytics .recent-list,#pageAnalytics .hm-scroll,#setDailyChatModelPickList,#promptPickerList,#quotaScanModels,#mdmList,#taskLogBox,[id^="editKeyModelList_"],[id^="editKeyAccountList_"],#pageAnalytics .pbody:has(>table),#pageAnalytics .fbody div:has(>table.data-cards))::-webkit-scrollbar-track{display:block!important;background:transparent!important}
+:is(.modal,.modal-bd,.page-sidebar,.page-nav,.cs-panel,#logTerminalBody,#tunerRows,#pageAnalytics .recent-list,#pageAnalytics .hm-scroll,#setDailyChatModelPickList,#promptPickerList,#quotaScanModels,#mdmList,#taskLogBox,[id^="editKeyModelList_"],[id^="editKeyAccountList_"],#pageAnalytics .pbody:has(>table),#pageAnalytics .fbody div:has(>table.data-cards))::-webkit-scrollbar-thumb{display:block!important;background:var(--line-hover)!important;border-radius:8px!important;border:2px solid transparent!important;background-clip:padding-box!important}
+:is(.modal,.modal-bd,.page-sidebar,.page-nav,.cs-panel,#logTerminalBody,#tunerRows,#pageAnalytics .recent-list,#pageAnalytics .hm-scroll,#setDailyChatModelPickList,#promptPickerList,#quotaScanModels,#mdmList,#taskLogBox,[id^="editKeyModelList_"],[id^="editKeyAccountList_"],#pageAnalytics .pbody:has(>table),#pageAnalytics .fbody div:has(>table.data-cards))::-webkit-scrollbar-thumb:hover{background:var(--dim-light)!important}
+
+/* ===== 数据看板：长表格给一个带滚动条的滚动区，表头吸顶 =====
+   高度用 calc 而不是裸 vh：--page-nav-top 是吸顶栏高+14，减掉它才不会钻到 header 底下。 */
+#pageAnalytics .pbody:has(>table),
+#pageAnalytics .fbody div:has(>table.data-cards){
+  max-height:min(var(--win-max-h,640px),calc(100vh - var(--page-nav-top,84px) - 24px));
+  overflow:auto!important}
+#pageAnalytics .pbody:has(>table) thead th,
+#pageAnalytics .fbody div:has(>table.data-cards) thead th{
+  position:sticky;top:0;z-index:2;background:var(--panel2);
+  box-shadow:inset 0 -1px 0 var(--line),inset 0 1px 0 var(--line)}
+@media (max-width:860px){
+  #pageAnalytics .pbody:has(>table),
+  #pageAnalytics .fbody div:has(>table.data-cards){max-height:min(var(--win-max-h,640px),60vh)}
+}
+/* 7 处内联 style="overflow-x:auto" 的裸表壳（模型清单/成长/积分等）同样是
+   sticky 的「最近可滚动祖先」，表头因此浮在行中间。这里一次性摘掉它们的滚动容器身份。
+   #pageAnalytics 里的 .pbody 需要横向滚动，排除在外。 */
+div[style*="overflow-x:auto"]:not(.pbody){overflow:visible!important}
+/* 窄窗保底：宁可横滚也不裁列（此时表头失去吸附，可接受） */
+@media (max-width:1100px){.table-wrap{overflow-x:auto;overflow-y:hidden}}
 .cs-empty{padding:10px 9px;font-size:11.5px;color:var(--dim-light);text-align:center}
 /* 深色主题下原生控件仍是系统配色，这里补一层兜底，避免未增强时闪白 */
 [data-theme="dark"] select{color-scheme:dark}
@@ -3922,7 +4068,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
         运行日志
       </button>
     </nav>
-    <a class="gh-link" href="https://github.com/yuanyuanyuan430/workbuddy2api-hub" target="_blank" rel="noopener noreferrer"
+    <a class="gh-link" href="https://github.com/ardeyouxipianyi/workbuddy2api-hub" target="_blank" rel="noopener noreferrer"
        title="查看 GitHub 项目仓库" aria-label="GitHub 项目仓库">
       <svg viewBox="0 0 16 16" aria-hidden="true">
         <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.012 8.012 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
@@ -4151,7 +4297,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
          信息/缓存文件）→ 黄色警示「模型、倍率数据可能不一致」。内容由
          /v1/models 的 catalog 字段驱动，见 renderModelsSourceLine。 -->
     <div id="modelsSourceLine" style="font-size:12px;color:var(--dim);margin:0 0 12px;min-height:16px"></div>
-    <div style="overflow-x:auto">
+    <div class="table-wrap">
       <table id="modelsTable" class="data-cards">
         <thead>
           <tr>
@@ -4260,7 +4406,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   <section>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
       <h2 style="margin:0">签到与活跃记录 <em id="activityCount"></em></h2>
-      <div style="display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <div id="activityFilters" style="display:inline-flex;align-items:center;gap:8px">
         <select id="activityRange" class="slot-select" onchange="loadActivityBoard()" aria-label="时间区间">
           <option value="today">今日</option>
           <option value="1d">近 1 天</option>
@@ -4336,12 +4482,12 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   <!-- 国内版专属成长任务与日常福利 -->
   <section id="sectionGrowthTasks">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-      <div>
+      <div style="min-width:0">
         <h2 style="margin:0">国内版任务与福利</h2>
         <div style="font-size:12px;color:var(--dim)">全自动批量接取、事件上报点亮并领取官方成长积分 (+1450分)，以及猫猫日常与打卡</div>
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <select id="growthAcctSelect" onchange="switchGrowthAccount(this.value)" style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:12px;color:var(--fg);font-family:inherit">
+      <div id="growthHeadActions" style="display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-left:auto">
+        <select id="growthAcctSelect" onchange="switchGrowthAccount(this.value)" style="background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:12px;color:var(--fg);font-family:inherit;width:auto;max-width:200px;flex:0 0 auto;text-overflow:ellipsis">
           <option value="all">全部国内账号 (批量)</option>
         </select>
         <label style="font-size:12px;color:var(--dim);display:flex;align-items:center;gap:4px">
@@ -4387,7 +4533,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
       </div>
     </div>
 
-    <div style="overflow-x:auto">
+    <div class="table-wrap">
       <table id="growthTable" class="data-cards">
         <thead>
           <tr>
@@ -4487,6 +4633,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
       <div class="pbody">
         <div class="chartbox">
           <canvas id="seriesCanvas" height="176"></canvas>
+          <canvas id="seriesHoverCanvas" height="176"></canvas>
           <div class="tooltip" id="seriesTip"></div>
         </div>
         <div class="legend" id="seriesLegend" style="margin-top:7px"></div>
@@ -4579,7 +4726,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
             <span style="font-size:12px;color:var(--dim)" id="remainingSummaryIntl">-</span>
           </div>
           <div id="remainingBudgetsIntl" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"></div>
-          <div style="overflow-x:auto;max-height:340px">
+          <div class="table-wrap">
             <table class="data-cards" id="remainingUsageTableIntl">
               <thead><tr>
                 <th style="text-align:left">账号</th>
@@ -4599,7 +4746,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
             <span style="font-size:12px;color:var(--dim)" id="remainingSummaryCn">-</span>
           </div>
           <div id="remainingBudgetsCn" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px"></div>
-          <div style="overflow-x:auto;max-height:340px">
+          <div class="table-wrap">
             <table class="data-cards" id="remainingUsageTableCn">
               <thead><tr>
                 <th style="text-align:left">账号</th>
@@ -4633,7 +4780,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
           <div style="font-size:12px;color:var(--dim)">当前范围内最近消耗积分（credit &gt; 0）的请求。</div>
           <button class="sec mini" onclick="loadCreditHistory(this)">刷新</button>
         </div>
-        <div style="overflow-x:auto;max-height:260px">
+        <div class="table-wrap">
           <table class="data-cards" id="creditHistoryTable">
             <thead><tr><th>时间</th><th>模型</th><th>账号</th><th>积分</th><th>Token</th></tr></thead>
             <tbody></tbody>
@@ -4659,7 +4806,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
           </div>
           <button class="sec mini" onclick="loadCreditGrants(this)">刷新</button>
         </div>
-        <div style="overflow-x:auto;max-height:260px">
+        <div class="table-wrap">
           <table class="data-cards" id="creditGrantsTable">
             <thead><tr><th>时间</th><th>账号</th><th>区域</th><th>名称</th><th>来源</th><th>积分</th><th>剩余</th><th>到期</th><th>状态</th></tr></thead>
             <tbody id="creditGrantsTbody"></tbody>
@@ -5026,6 +5173,13 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
             </div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+            <label style="display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--dim)">
+              deepseek-v4.1-flash 使用版本
+              <select id="setDeepseekVariant" onchange="saveDeepseekVariant(this)" style="min-width:220px">
+                <option value="free">免费版 · deepseek-v4.1-flash</option>
+                <option value="paid">付费版 · deepseek-v4.1-flash-sg</option>
+              </select>
+            </label>
             <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">
               <input id="setCreditFallback" type="checkbox" style="width:16px;height:16px">
               启用积分回退
@@ -9015,17 +9169,17 @@ function renderAccounts(){
     return;
   }
   box.innerHTML = '<div class="table-wrap"><table class="data-cards account-cards"><thead><tr>'
-    + '<th style="text-align:center;width:76px">版本</th>'
+    + '<th style="text-align:center;width:64px">版本</th>'
     + '<th style="text-align:left">账号</th>'
-    + '<th style="text-align:center;width:84px">状态</th>'
-    + '<th style="text-align:center;width:118px">今日活动</th>'
-    + '<th style="text-align:center;width:150px">出口</th>'
+    + '<th style="text-align:center;width:72px">状态</th>'
+    + '<th style="text-align:center;width:100px">今日活动</th>'
+    + '<th style="text-align:center;width:112px">出口</th>'
     + '<th style="text-align:center;width:64px">权重</th>'
-    + '<th style="text-align:left;width:120px">积分</th>'
-    + '<th style="text-align:right;width:70px">请求</th>'
-    + '<th style="text-align:right;width:88px">总 token</th>'
-    + '<th style="text-align:right;width:80px">缓存</th>'
-    + '<th style="text-align:center;width:232px">操作</th>'
+    + '<th style="text-align:left;width:96px">积分</th>'
+    + '<th style="text-align:right;width:58px">请求</th>'
+    + '<th style="text-align:right;width:74px">总 token</th>'
+    + '<th style="text-align:right;width:66px">缓存</th>'
+    + '<th style="text-align:center;width:196px">操作</th>'
     + '</tr></thead><tbody>' + list.map(accountRow).join('') + '</tbody></table></div>';
   // 表下不再堆两行说明图例（出站身份解释留在每行身份按钮组的悬停提示里，
   // 轮询/粘性说明挂到「账号列表」标题上），表格底部保持干净。
@@ -11183,9 +11337,14 @@ function restorePageNavHash(){
   if(!page) return;
   const id = (window.location.hash || '').slice(1);
   if(!id) return;
+  // 只在首次进入时用一次：页内导航会把 #page-sec-* 写进地址栏，若每次切页都照着
+  // 再跳一次，切回该页就会停在页中间（设置页实测 y=5254）。
+  if(window.__pageNavHashApplied) return;
+  window.__pageNavHashApplied = true;
   // 被隐藏的区块不进导航，也不该作为锚点落点（否则会滚到一个不可见的位置）
   const navigable = pageNavSections(page).some(function(s){ return s.id === id; });
   if(navigable) scrollToPageSection(page, id, false);
+  if(typeof onPageNavScroll === 'function') onPageNavScroll();
 }
 
 // ==== 账号区折叠开始 ====
@@ -11671,6 +11830,8 @@ async function loadSettings(showToast){
         creditFallbackState.textContent = creditFallback ? '(已启用)' : '(未启用)';
         creditFallbackState.style.color = creditFallback ? 'var(--accent2)' : 'var(--dim)';
       }
+      const dsVariantSel = document.getElementById('setDeepseekVariant');
+      if(dsVariantSel) dsVariantSel.value = deepseekVariantOf(data.model_aliases);
       const autoSwitchInput = document.getElementById('setAutoSwitch');
       if(autoSwitchInput) autoSwitchInput.checked = autoSwitch;
       const autoSwitchState = document.getElementById('setAutoSwitchState');
@@ -12460,6 +12621,34 @@ async function saveCreditFallback(btn){
     toast('保存失败: ' + e.message, 'bad');
   } finally {
     if(btn) btn.disabled = false;
+  }
+}
+
+/* 「deepseek-v4.1-flash 使用版本」选择列表：免费版 = 裸名原样，付费版 =
+   model_aliases 把裸名改写成 deepseek-v4.1-flash-sg。付费变体被网关主动从
+   /v1/models 剔除，客户端下拉永远看不到，所以只能在这里选。 */
+const DEEPSEEK_FREE_ID = 'deepseek-v4.1-flash';
+const DEEPSEEK_PAID_ID = 'deepseek-v4.1-flash-sg';
+
+function deepseekVariantOf(aliases){
+  const map = aliases && typeof aliases === 'object' ? aliases : {};
+  const hit = map[DEEPSEEK_FREE_ID] || map[DEEPSEEK_FREE_ID.toLowerCase()];
+  return String(hit || '').trim().toLowerCase() === DEEPSEEK_PAID_ID ? 'paid' : 'free';
+}
+
+async function saveDeepseekVariant(sel){
+  const paid = sel && sel.value === 'paid';
+  const map = {};
+  if(paid) map[DEEPSEEK_FREE_ID] = DEEPSEEK_PAID_ID;
+  try {
+    await postJSON('/settings/save', {model_aliases: map});
+    toast(paid
+      ? '已切换：deepseek-v4.1-flash 走付费版 deepseek-v4.1-flash-sg（消耗积分）'
+      : '已切换：deepseek-v4.1-flash 走免费版（不消耗积分）', 'ok');
+    loadSettings();
+  } catch(e) {
+    toast('保存失败: ' + e.message, 'bad');
+    loadSettings();
   }
 }
 
@@ -14518,6 +14707,9 @@ function switchMainTab(tab){
   // 账号页被合并掉之后（设置里的「账号独立成一个页签」关闭，默认），
   // ?tab=accounts 的书签与上次停留的页签都退回「网关与账号」页——区块就在那一页里。
   if(tab === 'accounts' && !_accountsSeparateTab) tab = 'gateway';
+  // 必须先归零再显示切换：否则首次给目标页建侧栏时，Chrome 的滚动锚定
+  // 会按旧内容高度把窗口顶到页底（设置页实测 y=5254）。
+  if(tab !== currentMainTab) window.scrollTo(0, 0);
   currentMainTab = tab;
   // Remember the page across reloads. The URL is updated so the address bar
   // matches what is on screen and a copied link reopens the same page;
@@ -16742,6 +16934,8 @@ function peakThroughput(){
 /* ---------------- 时序图 ---------------- */
 const seriesCanvas = $('seriesCanvas');
 const seriesTip = $('seriesTip');
+const seriesHoverCanvas = $('seriesHoverCanvas');
+let seriesHoverIdx = -1;
 function renderSeriesMeta(){
   const s = state.series;
   if (!s) return;
@@ -16858,7 +17052,8 @@ function drawSeries(){
   if (lineVals) legend.push(`<span><i style="background:${lineC}"></i>${lineLabel}</span>`);
   $('seriesLegend').innerHTML = legend.join('');
 
-  seriesLayout = {bars, series, step, metric, padL, padR, iw, gap, lineVals, lineMax, barC, lineC};
+  seriesLayout = {bars, series, step, metric, padL, padR, iw, gap, padT, ih, lineVals, lineMax, barC, lineC};
+  if (seriesHoverIdx >= 0) paintHover(Math.min(seriesHoverIdx, bars.length - 1));
 
   // hover
   cv.onmousemove = ev => {
@@ -16873,6 +17068,7 @@ function drawSeries(){
     idx = Math.max(0, Math.min(series.length - 1, idx));
     const b = series[idx];
     if (!b) return;
+    paintHover(idx);
     tip.style.opacity = 1;
     tip.style.left = Math.min(window.innerWidth - 200, ev.clientX + 14) + 'px';
     tip.style.top = Math.max(8, ev.clientY - 46) + 'px';
@@ -16887,7 +17083,62 @@ function drawSeries(){
     tip.innerHTML = `<div class="tt-t">${tt}</div>` +
       rows.map(r => `<div class="tt-r"><span>${r[0]}</span><b>${r[1]}</b></div>`).join('');
   };
-  cv.onmouseleave = () => { tip.style.opacity = 0; };
+  cv.onmouseleave = () => { tip.style.opacity = 0; paintHover(-1); };
+}
+
+function paintHover(idx){
+  seriesHoverIdx = idx;
+  const hcv = seriesHoverCanvas, cv = seriesCanvas;
+  if (!hcv || !cv) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (hcv.width !== cv.width || hcv.height !== cv.height){
+    hcv.width = cv.width; hcv.height = cv.height;
+    hcv.style.width = (cv.width / dpr) + 'px';
+    hcv.style.height = (cv.height / dpr) + 'px';
+  }
+  const ctx = hcv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const W = cv.width / dpr, H = cv.height / dpr;
+  ctx.clearRect(0, 0, W, H);
+  if (idx < 0 || !seriesLayout) return;
+  const L = seriesLayout, bars = L.bars || [];
+  if (!bars.length) return;
+  const i = Math.max(0, Math.min(bars.length - 1, idx));
+  const bar = bars[i];
+  if (!bar) return;
+  const cx = bar.x + bar.w / 2;
+  const col = L.barC || '#5b8def';
+  // 1) 整列聚光竖带
+  ctx.save();
+  ctx.globalAlpha = .09; ctx.fillStyle = col;
+  ctx.fillRect(bar.x - L.gap / 2, 0, Math.max(2, bar.w + L.gap), H);
+  ctx.restore();
+  // 2) 竖向虚线参考线
+  ctx.save();
+  ctx.globalAlpha = .55; ctx.strokeStyle = col; ctx.lineWidth = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, H); ctx.stroke();
+  ctx.restore();
+  // 3) 柱体描边 + 外发光
+  ctx.save();
+  ctx.strokeStyle = col; ctx.lineWidth = 1.5;
+  ctx.shadowColor = col; ctx.shadowBlur = 8;
+  if (bar.h > 1) ctx.strokeRect(bar.x + .75, bar.y + .75, Math.max(1, bar.w - 1.5), Math.max(1, bar.h - 1.5));
+  ctx.restore();
+  // 4) 柱顶圆点
+  ctx.save();
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.arc(cx, Math.max(2.5, bar.y), 3, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  // 5) 折线落点
+  if (L.lineVals && L.lineVals[i] != null && L.lineMax > 0 && L.ih){
+    const ly = L.padT + L.ih - L.lineVals[i] / L.lineMax * L.ih * .92;
+    ctx.save();
+    ctx.fillStyle = L.lineC || col;
+    ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(cx, ly, 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
 }
 
 /* ---------------- 热力图 ---------------- */
@@ -16917,12 +17168,12 @@ function buildHeatGrid(heat){
     cells.push(`<div class="hm-cell l${lv}" data-d="${key}" data-r="${req}" data-t="${b?(b.total_tokens||0):0}"></div>`);
     if (d.getDay() === 0) weekIdx++;
   }
-  grid.style.gridTemplateColumns = `repeat(${weekIdx + 1}, 10px)`;
+  grid.style.gridTemplateColumns = `repeat(${weekIdx + 1}, var(--hm-cell))`;
   grid.innerHTML = cells.join('');
   // 月份标签：按列定位
   const totalCols = weekIdx + 1;
-  monthsEl.style.gridTemplateColumns = `repeat(${totalCols}, 10px)`;
-  monthsEl.style.gap = '2px';
+  monthsEl.style.gridTemplateColumns = `repeat(${totalCols}, var(--hm-cell))`;
+  monthsEl.style.gap = 'var(--hm-gap)';
   monthsEl.innerHTML = monthSpans.map((s, i) => {
     const nextCol = i + 1 < monthSpans.length ? monthSpans[i+1].col : totalCols;
     const w = nextCol - s.col;
@@ -17757,6 +18008,11 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
     wrap.classList.remove('cs-open');
     var trg = wrap.querySelector('.cs-trigger');
     if (trg) trg.setAttribute('aria-expanded','false');
+    var panel = wrap.querySelector('.cs-panel');
+    if (panel){
+      try { if (panel.matches(':popover-open')) panel.hidePopover(); } catch (e) {}
+      panel.style.cssText = '';
+    }
     if (openWrap === wrap) openWrap = null;
   }
 
@@ -17783,6 +18039,9 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
       panel = document.createElement('div');
       panel.className = 'cs-panel';
       panel.setAttribute('role','listbox');
+      // manual：不参与浏览器自动的「点外面/Esc 关闭」，那套已由本文件的
+      // closeAll / 外部点击处理器负责，用 auto 会两边打架。
+      panel.setAttribute('popover','manual');
       wrap.appendChild(panel);
     }
     panel.textContent = '';
@@ -17813,22 +18072,47 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
   }
 
   function positionPanel(wrap){
-    var r = wrap.getBoundingClientRect();
-    var below = window.innerHeight - r.bottom;
-    var need = Math.min(320, window.innerHeight * 0.52);
-    var up = below < need && r.top > below;
+    var panel = wrap.querySelector('.cs-panel');
+    var trg = wrap.querySelector('.cs-trigger');
+    if (!panel || !trg) return;
+    var r = trg.getBoundingClientRect();
+    var vw = window.innerWidth, vh = window.innerHeight;
+    var gap = 4, edge = 8;
+    var cap = Math.min(320, vh * 0.52);
+    var below = vh - r.bottom - gap - edge;
+    var above = r.top - gap - edge;
+    var up = below < Math.min(cap, 140) && above > below;
+    var space = up ? above : below;
+    panel.style.minWidth = Math.round(r.width) + 'px';
+    var pw = panel.offsetWidth || r.width;
+    var left = Math.min(Math.max(edge, r.left), Math.max(edge, vw - pw - edge));
+    panel.style.left = Math.round(left) + 'px';
+    // 上下都放不下时至少留 96px，否则面板会被压成一条线
+    panel.style.maxHeight = Math.round(Math.min(cap, Math.max(space, 96))) + 'px';
+    if (up){
+      panel.style.top = 'auto';
+      panel.style.bottom = Math.round(vh - r.top + gap) + 'px';
+    } else {
+      panel.style.bottom = 'auto';
+      panel.style.top = Math.round(r.bottom + gap) + 'px';
+    }
     wrap.classList.toggle('cs-drop-up', up);
   }
 
   function openWrap_(wrap){
     closeAll(wrap);
-    positionPanel(wrap);
     wrap.classList.add('cs-open');
     openWrap = wrap;
     var trg = wrap.querySelector('.cs-trigger');
     if (trg) trg.setAttribute('aria-expanded','true');
-    var sel = wrap.querySelector('select');
     var panel = wrap.querySelector('.cs-panel');
+    // 顺序必须是 cs-open -> showPopover -> positionPanel：
+    // 关闭态 .cs-wrap:not(.cs-open) .cs-panel{display:none}，量不到尺寸。
+    if (panel){
+      try { if (!panel.matches(':popover-open')) panel.showPopover(); } catch (e) {}
+      positionPanel(wrap);
+    }
+    var sel = wrap.querySelector('select');
     if (panel && sel){
       var cur = panel.children[sel.selectedIndex];
       if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' });

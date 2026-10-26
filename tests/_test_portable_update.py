@@ -77,7 +77,7 @@ class UpdateSourceTests(unittest.TestCase):
     """
 
     def test_the_portable_updater_pulls_from_the_maintained_repository(self):
-        self.assertEqual(U.REPO_DEFAULT, "yuanyuanyuan430/workbuddy2api-hub")
+        self.assertEqual(U.REPO_DEFAULT, "ardeyouxipianyi/workbuddy2api-hub")
 
     def test_the_portable_updater_agrees_with_the_checker(self):
         import wb_updates
