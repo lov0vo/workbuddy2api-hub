@@ -141,7 +141,7 @@ def _root_backups():
         info = os.fstat(fd)
         if (not stat.S_ISREG(info.st_mode) or getattr(info, "st_uid", -1) != 0
                 or info.st_size > 65536
-                or (os.name != "nt" and (stat.S_IMODE(info.st_mode) & 0o022))):
+                or (stat.S_IMODE(info.st_mode) & 0o022)):
             return []
         with os.fdopen(fd, "rb", closefd=False) as stream:
             payload = json.loads(stream.read(65537).decode("utf-8"))
