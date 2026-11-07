@@ -1,6 +1,10 @@
 # 核心机密数据（千万不能上传到公共仓库）
+# accounts/*.json 只盖得住一级文件；子目录里的账号（codearts/ 这种按渠道分目录
+# 存一份 state.json + N 个账号 JSON 的）会整个漏过去，一次 git add -A 就把密钥
+# 推上公开仓库。所以再补一条 accounts/*/ 把整棵子目录树挡掉——以后新增渠道目录
+# 不用记得回来改这里。
 accounts/*.json
-accounts/agent-backups/
+accounts/*/
 !accounts/README.txt
 
 # 运行时日志和用量统计
