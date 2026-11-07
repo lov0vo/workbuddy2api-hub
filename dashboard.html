@@ -227,6 +227,51 @@ th.sortable:focus-visible .sort-arrow.idle{opacity:1}
 .bar-fill.think{background:var(--think)}
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;width:100%;border-radius:8px}
 .table-wrap table{min-width:720px}
+/* 表头吸顶：容器自己滚动、thead 钉在容器顶部。容器必须给高度上限，
+   否则 overflow 永不触发、sticky 也就没有参照物。
+   三类表格容器统一成同一套规矩（账号列表/最近请求用 .table-wrap，
+   网关模型清单用 .next-table-scroll，任务与福利等用行内 overflow-x:auto）：
+     · 高度上限压到 480px（内容不再把整页拉长）
+     · 只有表体滚，表头 sticky 钉住
+     · 横向一律不滚 —— 列多就让单元格换行，绝不裁掉右边数据
+   注意 109 行有 `*{scrollbar-width:thin}`，一旦 `scrollbar-width` 不是 auto，
+   Chromium 就完全忽略 `::-webkit-scrollbar`，所以只用 scrollbar-width 控粗细。 */
+@media (min-width:641px){
+  .main-page .table-wrap,
+  .main-page .next-table-scroll,
+  .main-page div[style*="overflow-x:auto"]{
+    max-height:min(480px, calc(100vh - 320px));
+    overflow-y:auto;overflow-x:hidden;
+    scrollbar-width:thin;
+  }
+  .main-page .table-wrap table,
+  .main-page .next-table-scroll table,
+  .main-page div[style*="overflow-x:auto"] table{min-width:0}
+  /* 行内 style="overflow-x:auto" 优先级高于选择器，横向禁用必须 !important */
+  .main-page div[style*="overflow-x:auto"]{overflow-x:hidden!important}
+  .main-page .table-wrap th,.main-page .table-wrap td,
+  .main-page .next-table-scroll th,.main-page .next-table-scroll td,
+  .main-page div[style*="overflow-x:auto"] th,
+  .main-page div[style*="overflow-x:auto"] td{white-space:normal!important}
+  .main-page .table-wrap thead th,
+  .main-page .next-table-scroll thead th,
+  .main-page div[style*="overflow-x:auto"] thead th{
+    position:sticky;top:0;z-index:3;background:var(--panel2)}
+}
+/* 卡片本身不滚动：滚动只发生在卡片内部的表格容器里。
+   卡片一旦自己成为滚动容器，标题、按钮区、表头、分页就会跟着内容一起滚，
+   看着像「整张卡片在滚」，而且卡片右缘会多出一条和表格那条并排的滚动条。
+   限高开关已关（accounts/settings.json 的 section_max_height = 0），
+   这里再兜一层：含表格的卡片一律解除限高。 */
+.main-page section:has(.table-wrap),
+.main-page section:has(.next-table-scroll),
+.main-page section:has(div[style*="overflow-x:auto"]){
+  max-height:none!important;overflow:visible!important}
+/* 页面/窗口最右边那条大滚动条：藏掉。
+   109 行的 `*{scrollbar-width:thin}` 是给每个元素各写一遍，所以这条只作用在
+   html / body 自己身上，不会连带藏掉卡片里表格的那条（那条单独设了 thin）。 */
+html,body{scrollbar-width:none}
+html::-webkit-scrollbar,body::-webkit-scrollbar{display:none;width:0;height:0}
 /* 单元格里「长文本省略号」的统一 span：截断样式收在这里，宽度上限由行内
    style 按列给（不同列不同），媒体查询只调上限与折行行为。 */
 .note-clip{display:inline-block;vertical-align:bottom;overflow:hidden;
@@ -307,12 +352,13 @@ table.account-cards td[data-label="账号"] .cool-pill{display:block;width:100%;
 @media (min-width:641px){
   table.account-cards{table-layout:fixed;min-width:1262px}
   table.account-cards th:nth-child(2),table.account-cards td:nth-child(2){width:180px}
-  table.account-cards td.acct-actions{white-space:normal;min-width:232px;width:232px;position:sticky;right:0;z-index:2;background:var(--panel);box-shadow:-8px 0 12px -12px rgba(31,30,27,.55)}
+  table.account-cards td.acct-actions{white-space:normal;min-width:280px;width:280px;position:sticky;right:0;z-index:2;background:var(--panel);box-shadow:-8px 0 12px -12px rgba(31,30,27,.55)}
   table.account-cards th:last-child{position:sticky;right:0;z-index:3;background:var(--panel2);box-shadow:-8px 0 12px -12px rgba(31,30,27,.55)}
   table.account-cards tbody tr:hover td.acct-actions{background:var(--panel2)}
-  /* 操作区沿用原来的两行布局，不在窄列中再次折成三四行。 */
-  table.account-cards .acct-actions-col{min-width:max-content;max-width:none}
-  table.account-cards .acct-actions-row{flex-wrap:nowrap;max-width:none}
+  /* 操作区沿用原来的两行布局，不在窄列中再次折成三四行；宽度够时不折，
+     窗口太窄时允许折行兜底，宁可折行也不要被裁掉。 */
+  table.account-cards .acct-actions-col{min-width:0;max-width:100%}
+  table.account-cards .acct-actions-row{flex-wrap:wrap;max-width:100%}
 }
 @media (max-width:640px){
   table.account-cards{min-width:0!important;table-layout:auto}
@@ -1134,6 +1180,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
 
 
 #pageAnalytics .chartbox{position:relative}
+#pageAnalytics #seriesHoverCanvas{position:absolute;left:0;top:0;pointer-events:none;display:block}
 #pageAnalytics canvas.series{width:100%;display:block}
 #pageAnalytics .tooltip{
   position:fixed;pointer-events:none;z-index:60;opacity:0;transition:opacity .1s ease;
@@ -1305,7 +1352,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   transform:translateY(-2px) rotate(45deg);transition:transform .18s ease,opacity .14s ease}
 .cs-trigger:hover .cs-arrow{opacity:.8}
 .cs-wrap.cs-open .cs-arrow{transform:translateY(1px) rotate(-135deg)}
-.cs-panel{position:absolute;z-index:80;top:calc(100% + 4px);left:0;min-width:100%;
+.cs-panel{position:fixed;z-index:80;inset:auto;margin:0;color:inherit;min-width:0;
   max-width:min(320px,calc(100vw - 24px));max-height:min(320px,52vh);overflow:auto;
   background:var(--panel);border:1px solid var(--line);border-radius:10px;
   box-shadow:var(--shadow-md);padding:4px;
@@ -1313,7 +1360,7 @@ button.page-nav-top:hover{background:var(--panel2);border-color:var(--accent);co
   transition:opacity .13s ease,transform .13s ease;
   scrollbar-width:thin}
 .cs-wrap.cs-open .cs-panel{opacity:1;transform:none;pointer-events:auto}
-.cs-wrap.cs-drop-up .cs-panel{top:auto;bottom:calc(100% + 4px);transform:translateY(4px) scale(.985)}
+.cs-wrap.cs-drop-up .cs-panel{transform:translateY(4px) scale(.985)}
 .cs-wrap.cs-drop-up.cs-open .cs-panel{transform:none}
 .cs-opt{display:flex;align-items:center;gap:7px;padding:6px 9px;border-radius:7px;
   font-size:12px;color:var(--fg);cursor:pointer;white-space:nowrap;
@@ -1751,7 +1798,7 @@ html[data-console-layout="on"] #classicTitle {display:none}
 </style>
 <script>
 var defaultConsoleLayout = true;
-try { defaultConsoleLayout = localStorage.getItem('wb-console-layout') !== '0'; } catch(e){}
+try { defaultConsoleLayout = localStorage.getItem('wb-console-layout') === '1'; } catch(e){}
 if(!window.__NEXT_UI__ && defaultConsoleLayout) {
   document.documentElement.setAttribute('data-console-layout','on');
   document.getElementById('wb-alibaba-console').media = 'all';
@@ -1977,7 +2024,7 @@ if(!window.__NEXT_UI__ && defaultConsoleLayout) {
     '媒体生成': 'Media generation',
     '生图 / 生视频的开关在「设置」页；这里看模型约束和最近任务。每次生成都会真实扣账号积分。': 'The image / video switches live on the Settings page; this page shows model limits and recent tasks. Every generation really spends account credits.',
     '可用媒体模型': 'Available media models',
-    '该区目录里带媒体标签的模型，以及各自的时长与分辨率约束。只读，不发上游。': 'Media-tagged models in this realm\'s catalogue, with their duration and resolution limits. Read-only; no upstream request.',
+    '该区目录里带媒体标签的模型，以及各自的时长与分辨率约束，和实测单价。只读，不发上游。': 'Media-tagged models in this realm\'s catalogue, with their duration and resolution limits and measured prices. Read-only; no upstream request.',
     '最近任务': 'Recent tasks',
     '生视频是异步任务：提交后在这里看进度、失败原因与产物。每个 API Key 只看得到自己提交的任务。': 'Video generation is asynchronous: submission returns immediately, progress, failure reasons and artifacts show up here. Each API key only sees its own tasks.',
     '媒体能力（生图 / 生视频）': 'Media (image / video generation)',
@@ -4779,17 +4826,16 @@ html[data-ui="next"] .next-switch-knob{
 }
 html[data-ui="next"] .next-switch[aria-checked="true"] .next-switch-knob{transform:translateX(16px)}
 html[data-ui="next"] .next-scheduler-section #btnToggleSched{display:none!important}
+/* 设置页的二级分类条：外观与其它页面顶部的 .page-nav 条同一套——透明容器 +
+   底部 1px 分隔线 + 999px 胶囊项，选中态同样走 accent-soft / accent。
+   按钮自身的规格在下面 .page-nav-item 的规则里共用一份（选择器已并入），
+   这里只描述容器，避免两处再分叉。 */
 html[data-ui="next"] .next-settings-groups{
-  display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin:0 0 16px;
-  padding:4px;background:var(--panel2);border:1px solid var(--line);border-radius:11px;
-  width:fit-content;max-width:100%;
+  display:flex;align-items:center;gap:6px;flex-wrap:nowrap;margin:0 0 14px;
+  padding:0 0 10px;background:transparent;border:0;border-bottom:1px solid var(--line);
+  border-radius:0;width:100%;max-width:100%;overflow-x:auto;scrollbar-width:none;
 }
-html[data-ui="next"] .next-settings-group{
-  appearance:none;border:0;background:transparent;color:var(--dim);font:inherit;
-  font-size:11.5px;font-weight:600;padding:6px 12px;border-radius:8px;cursor:pointer;white-space:nowrap;
-}
-html[data-ui="next"] .next-settings-group:hover{color:var(--fg)}
-html[data-ui="next"] .next-settings-group.active{background:var(--panel);color:var(--fg);box-shadow:var(--shadow-sm)}
+html[data-ui="next"] .next-settings-groups::-webkit-scrollbar{display:none}
 html[data-ui="next"] .next-settings-head{margin:0 0 14px}
 html[data-ui="next"] .next-settings-head h2{margin:0 0 4px;font-size:18px;font-weight:750;letter-spacing:-.025em}
 html[data-ui="next"] .next-settings-head p{margin:0;font-size:12px;color:var(--dim)}
@@ -4938,13 +4984,19 @@ html[data-ui="next"] .page-nav-top{
   white-space:nowrap!important;margin-left:auto!important;
 }
 html[data-ui="next"] .page-nav-top:hover{color:var(--fg)!important;border-color:var(--line-hover)!important}
-html[data-ui="next"] .page-nav-item{
+/* 页面顶部二级导航的胶囊项：设置页的分类条（.next-settings-group）与各页
+   由 initPageNav() 生成的区块导航（.page-nav-item）共用这一份规格，改一处
+   两边同时生效——两者的选中态、圆角、字号、内距必须永远一致。 */
+html[data-ui="next"] .page-nav-item,
+html[data-ui="next"] .next-settings-group{
   border:1px solid transparent!important;background:transparent!important;color:var(--dim)!important;
   border-radius:999px!important;padding:5px 10px!important;font-size:11px!important;text-align:left!important;
-  white-space:nowrap!important;
+  white-space:nowrap!important;flex:0 0 auto;
 }
-html[data-ui="next"] .page-nav-item:hover{background:var(--panel2)!important;color:var(--fg)!important}
-html[data-ui="next"] .page-nav-item.active{background:var(--accent-soft)!important;color:var(--accent)!important;font-weight:650!important;border-color:rgba(79,70,229,.14)!important}
+html[data-ui="next"] .page-nav-item:hover,
+html[data-ui="next"] .next-settings-group:hover{background:var(--panel2)!important;color:var(--fg)!important}
+html[data-ui="next"] .page-nav-item.active,
+html[data-ui="next"] .next-settings-group.active{background:var(--accent-soft)!important;color:var(--accent)!important;font-weight:650!important;border-color:rgba(79,70,229,.14)!important}
 html[data-ui="next"] .page-sidebar-toggle{border-radius:6px!important;border-color:var(--line)!important;background:var(--panel)!important}
 
 /* 弹窗 */
@@ -5816,7 +5868,7 @@ html[data-ui="next"] #nextContent .console-shell > main {padding:24px;max-width:
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
         <div>
           <h2 style="margin:0">可用媒体模型 <em id="mediaModelsState"></em></h2>
-          <div style="font-size:12px;color:var(--dim)">该区目录里带媒体标签的模型，以及各自的时长与分辨率约束。只读，不发上游。</div>
+          <div style="font-size:12px;color:var(--dim)">该区目录里带媒体标签的模型，以及各自的时长与分辨率约束，和实测单价。只读，不发上游。</div>
         </div>
         <button class="sec mini" onclick="loadMediaModels(true)">重新读取</button>
       </div>
@@ -5962,6 +6014,7 @@ html[data-ui="next"] #nextContent .console-shell > main {padding:24px;max-width:
       <div class="pbody">
         <div class="chartbox">
           <canvas id="seriesCanvas" height="176"></canvas>
+          <canvas id="seriesHoverCanvas" height="176"></canvas>
           <div class="tooltip" id="seriesTip"></div>
         </div>
         <div class="legend" id="seriesLegend" style="margin-top:7px"></div>
@@ -6584,7 +6637,7 @@ html[data-ui="next"] #nextContent .console-shell > main {padding:24px;max-width:
               国际版 deepseek-v4.1-flash 免费额度在所有账号均耗尽（6004 撞线）后，自动回退到 deepseek-v4.1-flash-sg 付费通道。默认关闭。
             </div>
             <div style="font-size:12px;color:var(--warn);margin-top:4px">
-              注意：回退后将消耗账户中的真实积分（x0.03 倍率），请确认知晓积分成本后再开启。
+              注意：回退后将消耗账户中的真实积分（x0.11 倍率），请确认知晓积分成本后再开启。
             </div>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
@@ -11424,7 +11477,7 @@ function renderAccounts(){
     + '<th style="text-align:right;width:70px">请求</th>'
     + '<th style="text-align:right;width:88px">总 token</th>'
     + '<th style="text-align:right;width:80px">缓存</th>'
-    + '<th style="text-align:center;width:232px">操作</th>'
+    + '<th style="text-align:center;width:280px">操作</th>'
     + '</tr></thead><tbody>' + body + '</tbody></table></div>';
   const pager = ACCT_TOTAL_PAGES > 1 ? acctPagerHtml(list.length) : '';
   const lo = (ACCT_PAGE - 1) * ACCT_PAGE_SIZE;
@@ -13490,9 +13543,10 @@ async function startDashboard(){
   // 前两步决定下面各自查什么（VIEW_REALM / 面板可见性），必须先行；之后就并行，
   // 别让国内版那条约 2 秒的成长任务接口把首屏的用量卡片拖在后面。
   await loadSettings();
-  // 新面板把账号固定成独立页：服务端仍保留 accounts_separate_tab 字段给旧壳，
-  // 但新壳每次都按拆分布局渲染，避免账号区被搬回总览。
-  if(window.__NEXT_UI__) applyAccountsTabLayout(true);
+  // 新面板与旧壳共用同一个开关：accounts_separate_tab 关闭（默认）时账号区合并
+  // 进总览，排布与经典「网关与账号」一致——账号列表 / 当前禁用 / 签到与活跃记录
+  // 落在最近请求之前；只有显式打开「账号独立成一个页签」才拆成两页。
+  // （loadSettings 已经按服务端值调过一次 applyAccountsTabLayout，这里不再覆盖。）
   await initRealm();
   // 成长任务那条走上游、约 2 秒，只服务「任务与福利」页，而且它自己渲染。原来
   // 它在这一批 Promise.all 里，switchMainTab 因此被押到它后面——落在数据看板
@@ -14181,6 +14235,11 @@ function applyAccountsTabLayout(separate){
 
   const btnAccounts = document.getElementById('btnNavAccounts');
   if(btnAccounts) btnAccounts.style.display = _accountsSeparateTab ? '' : 'none';
+  // 新壳（#nextNav / 底部导航 / 「更多」面板）里那个「账号」入口同样跟着走：
+  // 合并后账号区已经搬进总览，再留一个指向空页的入口只会点出一片空白。
+  Array.prototype.forEach.call(
+    document.querySelectorAll('[data-next-tab="accounts"]'),
+    function(el){ el.style.display = _accountsSeparateTab ? '' : 'none'; });
   // 名字跟着走：账号已经不在这一页了，就不能再叫「网关与账号」。
   const gatewayLabel = document.getElementById('navGatewayLabel');
   if(gatewayLabel) gatewayLabel.textContent = document.documentElement.getAttribute('data-console-layout') === 'on' ? '运行概览' : (_accountsSeparateTab ? '网关' : '网关与账号');
@@ -14274,6 +14333,66 @@ async function loadMediaPage(){
   loadMediaTasks();
 }
 
+/* 媒体模型的单价格子。/v1/media/models 会为每个条目挂上**实测**价：
+   生图 creditPerImage（creditPerImageMeasured 说明这一档是不是真观测到过），
+   生视频 creditsPerSecond（对象 = 逐分辨率各一档，这是主字段）、
+   creditPerSecond（数字 = 默认分辨率那一档，老字段，留着兼容），
+   带参考素材另有 creditsPerSecondWithReference（实测正好 2 倍），
+   关掉声音另有 creditsPerSecondMuted（实测只有有声的 2/3），
+   完全没测到价的给 creditPerSecondCeiling（上界，不是实际价）。
+   没观测过的一律说清楚，不拿别档的价冒充。
+   注意：只读 creditPerSecond（单数）会让逐分辨率价永远显示不出来——后端两个
+   字段都发，这里必须优先读复数那个。 */
+function mediaPriceCell(m){
+  const num = v => (v == null || v === '' || isNaN(Number(v))) ? null : Number(v);
+  const fmtP = v => {
+    const n = num(v);
+    if(n == null) return '-';
+    return (Math.round(n * 100) / 100).toFixed(2).replace(/\.?0+$/, function(s){
+      return s === '.00' ? '' : s;
+    });
+  };
+  const line = (txt, dim) => '<div class="mono" style="font-size:11px;line-height:1.55'
+    + (dim ? ';color:var(--dim)' : '') + '">' + esc(txt) + '</div>';
+  const tags = m.tags || [];
+  const isVideo = tags.indexOf('text-to-video') >= 0 || tags.indexOf('image-to-video') >= 0;
+  const refLine = () => {
+    const ref = m.creditsPerSecondWithReference;
+    if(!ref || typeof ref !== 'object') return '';
+    const first = Object.keys(ref)[0];
+    if(!first) return '';
+    return line('带参考素材 ' + fmtP(ref[first]) + ' / 秒（' + first + '）', true);
+  };
+  if(!isVideo){
+    const per = num(m.creditPerImage);
+    if(per == null) return '<span style="color:var(--dim)">-</span>';
+    return line(fmtP(per) + ' 积分 / 张')
+      + (m.creditPerImageMeasured === false ? line('估算值', true) : '');
+  }
+  const mutedLine = () => {
+    const muted = m.creditsPerSecondMuted;
+    if(!muted || typeof muted !== 'object') return '';
+    const names = Object.keys(muted);
+    if(!names.length) return '';
+    return line('静音 ' + names.map(function(n){
+      return fmtP(muted[n]) + ' / 秒 · ' + n;
+    }).join(' / '), true);
+  };
+  const grid = m.creditsPerSecond;
+  if(grid && typeof grid === 'object'){
+    const out = Object.keys(grid).map(name => line(fmtP(grid[name]) + ' / 秒 · ' + name));
+    if(out.length) return out.join('') + mutedLine() + refLine();
+  }
+  if(num(m.creditPerSecond) != null){
+    return line(fmtP(m.creditPerSecond) + ' 积分 / 秒') + mutedLine() + refLine();
+  }
+  if(num(m.creditPerSecondCeiling) != null){
+    return line('≤ ' + fmtP(m.creditPerSecondCeiling) + ' 积分 / 秒', true)
+      + line('未实测，按上界估算', true);
+  }
+  return '<span style="color:var(--dim)">-</span>';
+}
+
 async function loadMediaModels(force){
   const box = document.getElementById('mediaModelsList');
   const state = document.getElementById('mediaModelsState');
@@ -14292,7 +14411,8 @@ async function loadMediaModels(force){
       return;
     }
     box.innerHTML = '<table><thead><tr><th>模型</th><th>能力</th><th>时长</th>'
-      + '<th>分辨率</th><th>比例</th><th>prompt 上限</th></tr></thead><tbody>'
+      + '<th>分辨率</th><th>比例</th><th>prompt 上限</th>'
+      + '<th style="text-align:center">价格（实测）</th></tr></thead><tbody>'
       + models.map(m => {
           const g = m.videoGeneration || {};
           const tags = (m.tags || []).map(t => {
@@ -14309,9 +14429,17 @@ async function loadMediaModels(force){
                + '<td>' + tags + '</td><td>' + esc(span) + '</td>'
                + '<td class="mono">' + esc(res) + '</td>'
                + '<td class="mono">' + esc(ratios) + '</td>'
-               + '<td>' + esc(prompt) + '</td></tr>';
+               + '<td>' + esc(prompt) + '</td>'
+               + '<td style="text-align:center">' + mediaPriceCell(m) + '</td></tr>';
         }).join('')
-      + '</tbody></table>';
+      + '</tbody></table>'
+      + '<div style="font-size:11px;color:var(--dim);margin-top:8px;line-height:1.7">'
+      + '价格是网关按真实扣费实测出来的，直接从账号积分扣、不经 token 计费。'
+      + '生图 hy-image-3.5 实测 0.03 积分/张（文生图与改图同价）；'
+      + '生视频 kling-video-v3 实测 720P 10.79 / 1080P 14.39 / 4K 35.96 积分/秒，'
+      + '按秒线性计价（3 秒与 5 秒折算同价），关掉声音约为有声的 2/3；'
+      + '换分辨率就是另一个价，带参考素材是另一档，实测正好 2 倍。'
+      + '标「估算值」「未实测」的是还没观测到实扣，只能当量级看。</div>';
   }catch(e){
     if(state){ state.textContent = '(读取失败)'; state.style.color = 'var(--bad)'; }
     box.innerHTML = '<div style="font-size:12px;color:var(--bad)">' + esc(e.message) + '</div>';
@@ -14716,8 +14844,10 @@ async function loadSettings(showToast){
     applyHiddenPages(data.hidden_pages);
     // 账号页签模式：同样只有明确存过 true 才拆开，其余（没存过、存坏了、
     // 后端没这个字段）都保持上游那个合并的「网关与账号」页。
+    // 新壳（ui=next）也用同一条口径：合并时账号区落在总览页的最近请求之前，
+    // 导航里的「账号」入口自动隐藏；想拆开就在设置里打开「账号独立成一个页签」。
     const separateTab = data.accounts_separate_tab === true;
-    applyAccountsTabLayout(window.__NEXT_UI__ || separateTab);
+    applyAccountsTabLayout(separateTab);
     applyMediaSettings(data.media);
     const separateState = document.getElementById('setAccountsSeparateState');
     if(separateState) separateState.textContent = separateTab ? '(已开启)' : '(默认：合并)';
@@ -20127,6 +20257,8 @@ function peakThroughput(){
 /* ---------------- 时序图 ---------------- */
 const seriesCanvas = $('seriesCanvas');
 const seriesTip = $('seriesTip');
+const seriesHoverCanvas = $('seriesHoverCanvas');
+let seriesHoverIdx = -1;
 function renderSeriesMeta(){
   const s = state.series;
   if (!s) return;
@@ -20241,7 +20373,8 @@ function drawSeries(){
   if (lineVals) legend.push(`<span><i style="background:${lineC}"></i>${lineLabel}</span>`);
   $('seriesLegend').innerHTML = legend.join('');
 
-  seriesLayout = {bars, series, step, metric, padL, padR, iw, gap, lineVals, lineMax, barC, lineC};
+  seriesLayout = {bars, series, step, metric, padL, padR, iw, gap, padT, ih, lineVals, lineMax, barC, lineC};
+  if (seriesHoverIdx >= 0) paintHover(Math.min(seriesHoverIdx, bars.length - 1));
 
   // hover
   cv.onmousemove = ev => {
@@ -20256,6 +20389,7 @@ function drawSeries(){
     idx = Math.max(0, Math.min(series.length - 1, idx));
     const b = series[idx];
     if (!b) return;
+    paintHover(idx);
     tip.style.opacity = 1;
     tip.style.left = Math.min(window.innerWidth - 200, ev.clientX + 14) + 'px';
     tip.style.top = Math.max(8, ev.clientY - 46) + 'px';
@@ -20270,7 +20404,62 @@ function drawSeries(){
     tip.innerHTML = `<div class="tt-t">${tt}</div>` +
       rows.map(r => `<div class="tt-r"><span>${r[0]}</span><b>${r[1]}</b></div>`).join('');
   };
-  cv.onmouseleave = () => { tip.style.opacity = 0; };
+  cv.onmouseleave = () => { tip.style.opacity = 0; paintHover(-1); };
+}
+
+/* 悬停标记：单独一层 canvas 画十字线 / 聚光带 / 落点，主图不重绘。
+   主图只在数据变化时 drawSeries 一次，鼠标移动只清这一层，长会话也不掉帧。 */
+function paintHover(idx){
+  if (!seriesHoverCanvas) return;
+  const hcv = seriesHoverCanvas, cv = seriesCanvas;
+  const dpr = window.devicePixelRatio || 1;
+  if (hcv.width !== cv.width || hcv.height !== cv.height){
+    hcv.width = cv.width; hcv.height = cv.height;
+    hcv.style.width = cv.style.width; hcv.style.height = cv.style.height;
+  }
+  const ctx = hcv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const W = cv.clientWidth, H = 176;
+  ctx.clearRect(0, 0, W, H);
+  seriesHoverIdx = idx;
+  if (idx < 0 || !seriesLayout) return;
+  const L = seriesLayout;
+  const bar = L.bars[idx];
+  if (!bar) return;
+  const accent = seriesColor('--accent') || '#a14427';
+  const cx = L.padL + L.gap * idx + L.gap / 2;
+  const top = L.padT, bottom = L.padT + L.ih;
+
+  // 整列聚光竖带
+  ctx.fillStyle = accent; ctx.globalAlpha = .09;
+  ctx.fillRect(L.padL + L.gap * idx, top, L.gap, L.ih);
+  ctx.globalAlpha = 1;
+
+  // 竖向虚线
+  ctx.strokeStyle = accent; ctx.globalAlpha = .55;
+  ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cx, top); ctx.lineTo(cx, bottom); ctx.stroke();
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
+
+  // 柱体描边 + 柱顶圆点
+  ctx.strokeStyle = accent; ctx.lineWidth = 1.2; ctx.globalAlpha = .85;
+  if (bar.h >= 0.5){
+    ctx.beginPath();
+    ctx.rect(bar.x + .5, bar.y + .5, Math.max(1, bar.w - 1), Math.max(1, bar.h - 1));
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = accent;
+  ctx.beginPath();
+  ctx.arc(bar.x + bar.w / 2, Math.max(2.5, bar.y), 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 折线落点
+  if (L.lineVals && L.lineVals.length > idx){
+    const ly = L.padT + L.ih - L.lineVals[idx] / L.lineMax * L.ih * .92;
+    ctx.fillStyle = L.lineC || accent;
+    ctx.beginPath(); ctx.arc(cx, ly, 2.6, 0, Math.PI * 2); ctx.fill();
+  }
 }
 
 /* ---------------- 热力图 ---------------- */
@@ -21140,6 +21329,11 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
     wrap.classList.remove('cs-open');
     var trg = wrap.querySelector('.cs-trigger');
     if (trg) trg.setAttribute('aria-expanded','false');
+    var panel = wrap.querySelector('.cs-panel');
+    if (panel){
+      try { if (panel.hidePopover && panel.matches(':popover-open')) panel.hidePopover(); } catch(e){}
+      panel.style.cssText = '';
+    }
     if (openWrap === wrap) openWrap = null;
   }
 
@@ -21166,6 +21360,7 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
       panel = document.createElement('div');
       panel.className = 'cs-panel';
       panel.setAttribute('role','listbox');
+      panel.setAttribute('popover','manual');
       wrap.appendChild(panel);
     }
     panel.textContent = '';
@@ -21196,28 +21391,46 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
   }
 
   function positionPanel(wrap){
-    var r = wrap.getBoundingClientRect();
-    var below = window.innerHeight - r.bottom;
-    var need = Math.min(320, window.innerHeight * 0.52);
-    var up = below < need && r.top > below;
-    wrap.classList.toggle('cs-drop-up', up);
     var panel = wrap.querySelector('.cs-panel');
-    if (panel){
-      var avail = up ? (r.top - 12) : (below - 12);
-      var maxH = Math.max(100, Math.floor(Math.min(320, avail)));
-      panel.style.maxHeight = maxH + 'px';
+    if (!panel) return;
+    var trg = wrap.querySelector('.cs-trigger') || wrap;
+    var r = trg.getBoundingClientRect();
+    var gap = 4, edge = 8;
+    var vw = window.innerWidth, vh = window.innerHeight;
+    panel.style.minWidth = Math.round(r.width) + 'px';
+    panel.style.left = '0px';
+    panel.style.top = '0px';
+    var pw = panel.offsetWidth || Math.round(r.width);
+    var cap = Math.min(320, vh * 0.52);
+    var below = vh - r.bottom - gap - edge;
+    var above = r.top - gap - edge;
+    var up = below < Math.min(cap, 120) && above > below;
+    wrap.classList.toggle('cs-drop-up', up);
+    var space = up ? above : below;
+    panel.style.maxHeight = Math.round(Math.min(cap, Math.max(space, 96))) + 'px';
+    var left = Math.min(Math.max(edge, r.left), Math.max(edge, vw - pw - edge));
+    panel.style.left = Math.round(left) + 'px';
+    if (up){
+      panel.style.top = 'auto';
+      panel.style.bottom = Math.round(vh - r.top + gap) + 'px';
+    } else {
+      panel.style.bottom = 'auto';
+      panel.style.top = Math.round(r.bottom + gap) + 'px';
     }
   }
 
   function openWrap_(wrap){
     closeAll(wrap);
-    positionPanel(wrap);
     wrap.classList.add('cs-open');
     openWrap = wrap;
     var trg = wrap.querySelector('.cs-trigger');
     if (trg) trg.setAttribute('aria-expanded','true');
-    var sel = wrap.querySelector('select');
     var panel = wrap.querySelector('.cs-panel');
+    if (panel && panel.showPopover){
+      try { if (!panel.matches(':popover-open')) panel.showPopover(); } catch(e){}
+    }
+    positionPanel(wrap);
+    var sel = wrap.querySelector('select');
     if (panel && sel){
       var cur = panel.children[sel.selectedIndex];
       if (cur && cur.scrollIntoView) cur.scrollIntoView({ block: 'nearest' });
@@ -21558,9 +21771,8 @@ if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TAB
       }
       return;
     }
-    if(tab === 'accounts' && typeof applyAccountsTabLayout === 'function'){
-      applyAccountsTabLayout(true);
-    }
+    // 账号页被合并掉之后（默认），点导航里的「账号」也退回总览——区块就在那一页里，
+    // switchMainTab 会做这个重定向。这里不再强制拆分布局。
     if(typeof switchMainTab === 'function') switchMainTab(tab);
     nextSyncChrome(nextCurrentTab() || tab);
     nextOpenMore(false);

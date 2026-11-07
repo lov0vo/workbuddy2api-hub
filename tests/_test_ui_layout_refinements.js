@@ -9,7 +9,8 @@ assert.ok(/\.cool-list\{display:flex;flex-direction:column/.test(html), '账号�
 assert.ok(/table\.account-cards td\[data-label="账号"\] \.cool-pill\{display:block;width:100%/.test(html), '告警 pill 应在账号列内收敛');
 assert.ok(/table\.account-cards \.acct-actions-row\{flex-wrap:wrap;max-width:100%\}/.test(html), '桌面操作区应允许换行以适应窄列');
 assert.ok(/table\.account-cards\{table-layout:fixed;min-width:1262px\}/.test(html), '桌面账号表应使用固定布局');
-assert.ok(/td\.acct-actions\{white-space:normal;min-width:196px;width:196px;position:sticky/.test(html), '操作列应固定在可视区域右侧');
+// 本地定制：操作列加宽到 280px，容纳分组 / 编辑 / 详情按钮，避免按钮折成三行。
+assert.ok(/td\.acct-actions\{white-space:normal;min-width:280px;width:280px;position:sticky/.test(html), '操作列应固定在可视区域右侧');
 assert.ok(/@media \(max-width:640px\)[\s\S]*?td\.acct-actions\{position:static/.test(html), '移动端应取消操作列 sticky');
 
 assert.ok(html.includes('class="credit-stack"'), '积分应使用分层容器');

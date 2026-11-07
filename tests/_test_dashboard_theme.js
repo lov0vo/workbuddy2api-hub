@@ -33,10 +33,11 @@ function firstLayout(saved, next, blocked) {
   new Function('window', 'document', 'localStorage', layoutSource[1])({__NEXT_UI__: next}, document, localStorage);
   return attrs['data-console-layout'] || '';
 }
-assert.equal(firstLayout(null, false, false), 'on', '首次访问默认控制台');
+// 本地定制：默认经典布局（localStorage 只有显式 '1' 才进新导航），上游默认是开。
+assert.equal(firstLayout(null, false, false), '', '首次访问默认经典布局');
 assert.equal(firstLayout('0', false, false), '', '保留经典布局偏好');
 assert.equal(firstLayout('1', false, false), 'on', '保留控制台偏好');
-assert.equal(firstLayout(null, false, true), 'on', '存储不可读时仍使用默认布局');
+assert.equal(firstLayout(null, false, true), 'on', '存储不可读时回落到控制台布局');
 assert.equal(firstLayout('1', true, false), '', '新导航不叠加控制台布局');
 
 const START = "var THEME_KEY = 'wb-theme';";

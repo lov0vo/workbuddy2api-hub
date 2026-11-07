@@ -48,7 +48,7 @@ class DeployModeTests(unittest.TestCase):
         image = "ghcr.io/ardeyouxipianyi/workbuddy2api-hub:latest"
         self.assertIn("    image: " + image, read("docker-compose.yml"))
         self.assertIn("    image: " + image, self.script)
-        self.assertIn("\n    " + image, self.readme)
+        self.assertIn("\n    image: " + image, self.readme)
         self.assertIn(
             'href="https://github.com/ardeyouxipianyi/workbuddy2api-hub"',
             read("dashboard.html"))
