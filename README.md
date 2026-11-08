@@ -1,14 +1,9 @@
 # WorkBuddy2API-Hub — 国际版、国内版多账号网关中枢
 
-> [!CAUTION]
-> **项目停止维护（2026-11-06）**：后续不再更新代码、不跟进上游变化、不再处理新的 issue / PR。感谢大家的 star。
-
 > [!IMPORTANT]
-> **项目进入低频维护（2026-10-23） / Low-frequency maintenance**
+> **官方群聊**：[https://t.me/wb2apihub](https://t.me/wb2apihub)
 >
-> 大幅降低更新频率与 Issue / PR 处理速度。请先阅读风险说明，再决定是否继续使用。
->
-> Updates and responses to issues / pull requests will be significantly reduced. Read the risk notice below before continuing.
+> **凭证安全**：本项目是本地部署网关，运行时需要在本地读取用户自行导入的账号凭证，才能调用官方接口；凭证保存在用户自己的 `accounts/` 目录。项目不会把凭证上传到本项目的第三方服务器，也没有隐藏的凭证收集或上传逻辑。请立即关闭公网暴露，联系官方吊销全部 OAuth / 设备授权，确认旧 token 返回 `401` 后再重新授权。
 
 > [!WARNING]
 > **WorkBuddy 上游正在收紧对非官方客户端的识别与拦截。**
@@ -25,12 +20,12 @@
 This project is for protocol research and personal use only. Prefer the official client, do not use your primary account, and do not resell or share access.
 
 <p align="center">
-  <a href="https://github.com/ardeyouxipianyi/workbuddy2api-hub/releases"><img src="https://img.shields.io/badge/Release-v2.0.0-2496ED?style=flat-square" alt="Version 2.0.0"></a>
+  <a href="https://github.com/ardeyouxipianyi/workbuddy2api-hub/releases"><img src="https://img.shields.io/badge/Release-v2.0.1-2496ED?style=flat-square" alt="Version 2.0.1"></a>
   <img src="https://img.shields.io/badge/Python-3.9+-blue.svg?style=flat-square" alt="Python">
   <img src="https://img.shields.io/badge/API-OpenAI_Compatible-412991?style=flat-square" alt="OpenAI API">
   <img src="https://img.shields.io/badge/Dual_Realm-Intl_&_CN-0DBD8B?style=flat-square" alt="Dual Realm">
   <img src="https://img.shields.io/badge/License-MIT-green.svg?style=flat-square" alt="License">
-  <img src="https://img.shields.io/badge/Maintenance-Ended-9f2d2d?style=flat-square" alt="Maintenance ended">
+  <img src="https://img.shields.io/badge/Maintenance-Resumed-0DBD8B?style=flat-square" alt="Maintenance resumed">
 </p>
 
 ## 核心特性
@@ -225,7 +220,7 @@ python tests/run_all.py            # 全部套件
 python tests/run_all.py realm      # 只跑名字里含 realm 的
 ```
 
-- 279 个套件：211 个 Python + 68 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
+- 283 个套件：214 个 Python + 69 个 JS；JS 需要 PATH 上有 `node`，缺失时会跳过并提示。
 - `tests/_mobile_check.py` 是独立的 Playwright 手机/桌面布局检查器（需自行安装 Playwright），按需手动运行，不在上面的套件集里。
 - CI（`.github/workflows/tests.yml`）跑同一条命令：Ubuntu 上 python 3.9 与 3.12（3.9 是本项目声称的最低版本），Windows 上 python 3.12；推送 `v*` tag 时额外断言 **tag == 源码版本**（`-ci` 演练 tag 豁免）。
 
@@ -235,6 +230,14 @@ python tests/run_all.py realm      # 只跑名字里含 realm 的
 
 ### Unreleased
 
+- **手机端账号区三处布局修正**：批量操作那组 6 个按钮一行摆不下时会被压成竖排单字，窄屏改为两列网格（3 行 2 列），文字保持横排；账号卡第一行原来塞了昵称、备注、分组、任务开关、版本、状态、账户类型，长昵称时整行顶出卡片，现在任务开关与版本 / 状态 / 类型收到第二行单独显示；操作区两层 flex 容器各自换行时「出站身份」会整块另起一行、中间空出一段，两行容器改为 `display:contents` 拆平，按钮按顺序自然流动（「导出」紧跟「同步昵称」，「删除」排在出站身份之后）。以上都只在 ≤640px 生效，桌面布局不变。
+- **请求到达即记日志（`chat head`）**：聊天日志行要等请求体收完才写，上传慢的请求在那段窗口里一行痕迹都没有，看起来像「对话卡住」，也分不清「上传慢」与「请求没到本进程」。现在 `do_POST` 在模型路由的请求头到达时先记一条 `chat head`（带 `content_length` 与 key），配合 `body_wait` 能直接区分两者。只覆盖对话真正使用的路由，面板轮询不刷日志。
+- **`responses:` 日志同时打客户端与实际生效的推理强度**：原来只打请求体里的 `effort`，客户端不填时恒为 `None`，读起来像「没开思考」，实际按模型默认档（如 `high`）在跑。现在同时打 `effort=`（客户端）与 `upstream_effort=`（实际写进上游请求的值），两者用与构造请求体同一份解析逻辑。
+- **自绘下拉面板不再被祖先裁剪、移动端出口/权重格不再互相挤压**：`.cs-panel` 从 `position:absolute` 改为 `position:fixed`，打开 / 滚动 / 缩放时把触发器坐标与最小宽度写进内联样式，向上展开的下拉不会再被账号卡区块的 `overflow-y:auto` 裁掉首行。出口 / 权重两格在移动端改用 `flex:1 1 0` 占剩余宽度，长节点名不再溢出盖住「权重：」标签。
+- **400 / 未处理 4xx 不再泄漏账号并发名额**：上游 400（如 11-128 渠道校验）原样透传时直接 `raise`，跳过了重试循环后的统一归还，账号在 `account_max_concurrent` 计数里永久 +1。上限为 1 时一个漏掉的名额就让它永远「已在服务 1 个请求」——面板健康、账号测试也绿，但派发再也不选它，只有重启进程才恢复。其它未单独处理的 4xx（如打错路径的 404）走同一个 `raise`，问题相同。现在两处 `raise` 之前都先归还名额。
+- **网关重启后账号列表不再被旧筛选过滤成空**：账号筛选（搜索词 / 状态 / 分组）是内存态，而网关重启后会话失效、重新登录不会刷新页面，重启前设的条件会原样留到登录后，把账号列表过滤成空——「当前禁用」区用的是未筛选名单，反而还显示账号，看起来像账号全丢了，必须手动点「清除筛选」才恢复。现在会话丢失与每次进入面板都会重置账号筛选，以「显示全部账号」为默认。
+- **账号表「权重」列不再只剩一个箭头**：64px 的列宽减去单元格内边距只剩 40px，自绘下拉的触发器要吃掉 padding 18px + gap 8px + 箭头 11px，数字被挤成 1px 宽。现在列宽放宽到 78px、该列内边距收到 8px，并给权重下拉单独的紧凑触发器，1–3 位数都留得下。
+- **国际版 DeepSeek 出站别名**：客户端和 `/v1/models` 继续显示 `deepseek-v4.1-flash`（同时保留显式 `-sg`），实际发给国际版上游时使用 `deepseek-v4.1-flash-sg`；API Key 模型白名单仍按 base 校验，响应与用量记录保留 `requested_model=deepseek-v4.1-flash`，实际计费模型记为 `-sg`。面板账号测试、每日活跃与窗口探针也走真实 `-sg`。`WB_INTL_MODEL_ALIAS=0` 可关闭映射。出站桌面身份同步到 5.9.4（UA `WorkBuddy/5.9.4 workbuddy-ai/5.9.4 CLI/2.165.0`）。
 - **MCP 服务端点**（`POST /mcp`，默认可用）：实现 MCP 2025-06-18 的无状态 JSON-RPC 子集（只回 `application/json`，不维护会话），把网关已有能力包成 6 个工具：`list_generation_models`、`generate_image`、`edit_image`、`generate_video`、`get_video_task`、`strip_watermark`（仅在去水印开关打开时出现）。工具调用不是另起一套逻辑，而是把参数当成 REST 请求体喂回既有 handler，所以选号、换号、计费与台账与直接调 REST 完全同一条路径。`GET /mcp` 返回 405 + `Allow: POST`。
 - **图片去水印裁切**（`POST /v1/images/strip-watermark`，开关 `watermark.enabled`，默认关）：从下往上逐行算亮度标准差，找出画面底部那条纯白留白的边界并裁掉。纯标准库实现，只收 PNG（其它格式回 415 并提示先转 PNG），不消耗上游积分（回执里 `usage.credit` 恒为 0）。留白不够高或不够白时回 422 并带上实测数字（留白像素数、占比、平均亮度），提示先用 `edit_image` 把底部约 1/3 涂成纯白再来裁。回读远端图片只放行上游产物域 `.myqcloud.com`，且不跟随重定向。
 - **文本嵌入接口**（`POST /v1/embeddings`，开关 `embeddings.enabled`，默认关）：OpenAI 兼容形状，转上游 `/v2/embeddings`，模型 `bge-m3`（1024 维，上游唯一实测可用的嵌入模型；嵌入模型与对话模型是两套注册表，`/v3/config` 里查不到）。响应会补齐 `object` / `index` 等 OpenAI 契约字段，条数不符直接报错而不是错位配对；`model_not_found` 与 `upstream_busy` 不换号不罚号。
