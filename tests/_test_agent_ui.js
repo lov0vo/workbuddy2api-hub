@@ -391,8 +391,10 @@ const check = (label, cond, extra) => {
         navAgents.style.display === 'none', JSON.stringify(navAgents.style));
   check('the availability flag flips to false', api.agentsAvailable() === false);
   api.switchMainTab('agents');
-  check('a stale agents tab falls back to the gateway page',
-        api.currentTab() === 'gateway', api.currentTab());
+  // 本地定制：新壳没有独立的智能体页，入口被撤掉后统一退回总览；
+  // 旧壳没有总览页，才退回网关（dashboard.html 的 switchMainTab）。
+  check('a stale agents tab falls back to the overview page',
+        api.currentTab() === 'overview', api.currentTab());
 
   process.stdout.write('agent config UI assertions passed (' + checks + ' checks)\n');
 })().catch(err => {

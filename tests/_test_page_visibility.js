@@ -250,14 +250,15 @@ const saves = () => calls.filter(c => c.url === '/settings/save');
   api.applyHiddenPages(['tasks']);
   api.switchMainTab('tasks');
   check('switchMainTab 不能被调到已收起的页面', api.currentTab() !== 'tasks', api.currentTab());
-  check('落到第一个还看得见的页面', api.currentTab() === 'gateway', api.currentTab());
+  check('落到第一个还看得见的页面', api.currentTab() === 'overview', api.currentTab());
   api.switchMainTab('logs');
   check('没被收起的页面照常能切', api.currentTab() === 'logs', api.currentTab());
 
   // 2i. 当前页被收起时退到第一个可见页（此时刻的清单里 gateway 是唯一可见的）。
+  // 本地定制：新壳优先退总览（dashboard.html 的 firstVisiblePage），旧壳才退网关。
   api.applyHiddenPages(['logs']);
   api.switchMainTab('logs');
-  check('当前页被收起后退回可见页', api.currentTab() === 'gateway', api.currentTab());
+  check('当前页被收起后退回可见页', api.currentTab() === 'overview', api.currentTab());
   api.applyHiddenPages([]);
 
   // 2j. 清单是现场读页签的：上游加一个页面，这里自动多一行，不用改这份代码。
