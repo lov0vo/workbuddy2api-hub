@@ -3,6 +3,7 @@ import io
 import json
 import os
 import sys
+import threading
 import time
 from unittest import mock
 
@@ -412,6 +413,85 @@ try:
     result = b''.join(stream)
     check("first SSE text normalized", b'"content": "hello"' in result, result)
 
+    print("== credit sampling ==")
+    acct._credit_settled_used = None
+    acct._credit_explicit_pending = 0.0
+    sample = C.CodeArtsStream(io.BytesIO(b""), "GLM-5.2", acct, acct.pool)
+    sample.seed_credit_baseline(10.0)
+    with mock.patch.object(C, "fetch_account_info",
+                           return_value={"credits": {"total": {"used": 10.25}}}):
+        usage = sample.finish_credit_sample({"total_tokens": 5})
+    check("credit delta recorded", usage.get("credit") == 0.25, usage)
+    check("credit finalize idempotent",
+          sample.finish_credit_sample({"total_tokens": 5}) is usage, usage)
+
+    upstream_credit = {"total_tokens": 5, "credit": 0.5}
+    acct._credit_settled_used = 10.0
+    acct._credit_explicit_pending = 0.0
+    explicit = C.CodeArtsStream(io.BytesIO(b""), "GLM-5.2", acct, acct.pool)
+    explicit.seed_credit_baseline(10.0)
+    with mock.patch.object(C, "fetch_account_info",
+                           return_value={"credits": {"total": {"used": 10.25}}}):
+        check("upstream credit wins",
+              explicit.finish_credit_sample(upstream_credit).get("credit") == 0.5,
+              upstream_credit)
+
+    failed_sample = C.CodeArtsStream(io.BytesIO(b""), "GLM-5.2", acct, acct.pool)
+    failed_sample.seed_credit_baseline(10.0)
+    with mock.patch.object(C, "fetch_account_info",
+                           side_effect=C.CodeArtsUnavailable("offline")):
+        failed_usage = failed_sample.finish_credit_sample({"total_tokens": 5})
+    check("credit sample failure is best effort",
+          failed_usage.get("credit") is None, failed_usage)
+
+    print("== credit concurrent settlement ==")
+    acct._credit_settled_used = None
+    acct._credit_explicit_pending = 0.0
+    first = C.CodeArtsStream(io.BytesIO(b""), "GLM-5.2", acct, acct.pool)
+    second = C.CodeArtsStream(io.BytesIO(b""), "GLM-5.2", acct, acct.pool)
+    first.seed_credit_baseline(20.0)
+    second.seed_credit_baseline(20.0)
+    settled = {}
+    barrier = threading.Barrier(2)
+
+    def settle(name, stream):
+        barrier.wait()
+        settled[name] = stream.finish_credit_sample({"total_tokens": 5})
+
+    with mock.patch.object(
+            C, "fetch_account_info",
+            return_value={"credits": {"total": {"used": 20.5}}}):
+        workers = [
+            threading.Thread(target=settle, args=("first", first)),
+            threading.Thread(target=settle, args=("second", second)),
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+    credits = sorted(float(item.get("credit") or 0) for item in settled.values())
+    check("concurrent credit delta is not double counted",
+          len(credits) == 2 and credits == [0.0, 0.5], credits)
+
+    print("== credit explicit pending ==")
+    acct._credit_settled_used = 10.0
+    acct._credit_explicit_pending = 0.0
+    explicit_pending = C.CodeArtsStream(io.BytesIO(b""), "GLM-5.2", acct, acct.pool)
+    explicit_pending.seed_credit_baseline(10.0)
+    with mock.patch.object(C, "fetch_account_info",
+                           return_value={"credits": {"total": {"used": 10.0}}}):
+        explicit_usage = explicit_pending.finish_credit_sample(
+            {"total_tokens": 5, "credit": 0.25})
+    next_usage = C.CodeArtsStream(io.BytesIO(b""), "GLM-5.2", acct, acct.pool)
+    next_usage.seed_credit_baseline(10.0)
+    with mock.patch.object(C, "fetch_account_info",
+                           return_value={"credits": {"total": {"used": 10.5}}}):
+        next_result = next_usage.finish_credit_sample({"total_tokens": 5})
+    check("explicit credit is reconciled once the counter advances",
+          explicit_usage.get("credit") == 0.25
+          and next_result.get("credit") == 0.25,
+          (explicit_usage, next_result))
+
     print("== named tool choice ==")
     tool_body = C.build_chat_body({
         "model": "GLM-5.2",
@@ -472,6 +552,90 @@ try:
           raw[:200])
     state.chat_error = None
     state.chat_error_remaining = -1
+
+    # 单账号并发上限 1 时，第二个请求必须排队等名额，而不是在约 100ms 内
+    # 被误报成「没有可用的 CodeArts 账号」并回 502（DSH 的自动标题请求与
+    # 首轮请求同时到达就是这个形态）。
+    print("== busy slot queue ==")
+    cfg_before = C.load_config(ACCOUNTS)
+    models_before = list(acct.models)
+    acct.models = [{"id": "GLM-5.2"}]
+    C.save_config(ACCOUNTS, {"max_concurrent": 1, "busy_wait_seconds": 2.0})
+    C.pool_for(ACCOUNTS)  # 让单例池按新配置刷新每个账号的 max_concurrent
+    check("busy test config", C.load_config(ACCOUNTS)["max_concurrent"] == 1)
+    check("busy test holds the only slot", pool.acquire(acct) is True)
+
+    class _HeldStream(object):
+        def __init__(self, owner):
+            self.owner = owner
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.close()
+            return False
+
+        def close(self):
+            self.owner.pool.release(self.owner)
+
+    def _fake_client(owner, body, session_key):
+        return _HeldStream(owner), body.get("model") or "GLM-5.2"
+
+    outcome = {}
+
+    def _queued_call():
+        started = time.time()
+        try:
+            stream, _owner, _mid = C.open_chat(
+                C.load_config(ACCOUNTS), {"model": "GLM-5.2"}, "sess-busy")
+            stream.close()
+            outcome["ok"] = True
+        except Exception as exc:  # noqa: BLE001 - report the type for the check
+            outcome["ok"] = False
+            outcome["error"] = exc
+        outcome["elapsed"] = time.time() - started
+
+    with mock.patch.object(C, "_client_chat", _fake_client), \
+            mock.patch.object(C, "_ensure_token", lambda owner: None), \
+            mock.patch.object(C, "ensure_models",
+                              lambda owner, force=False, timeout=20.0: []):
+        queued = threading.Thread(target=_queued_call)
+        queued.start()
+        time.sleep(0.4)
+        check("second request waits instead of failing fast", queued.is_alive())
+        pool.release(acct)
+        queued.join(5)
+        check("queued request runs after the slot frees",
+              outcome.get("ok") is True, outcome)
+        check("queued request really waited",
+              outcome.get("elapsed", 0) >= 0.3, outcome.get("elapsed"))
+
+        C.save_config(ACCOUNTS, {"busy_wait_seconds": 0.2})
+        C.pool_for(ACCOUNTS)
+        check("busy timeout config",
+              C.load_config(ACCOUNTS)["busy_wait_seconds"] == 0.2)
+        check("busy test holds the slot again", pool.acquire(acct) is True)
+        started = time.time()
+        try:
+            C.open_chat(C.load_config(ACCOUNTS), {"model": "GLM-5.2"},
+                        "sess-busy-timeout")
+            busy_error = None
+        except Exception as exc:  # noqa: BLE001
+            busy_error = exc
+        waited = time.time() - started
+        check("busy timeout raises CodeArtsBusy",
+              isinstance(busy_error, C.CodeArtsBusy),
+              type(busy_error).__name__)
+        check("busy timeout says busy, not missing",
+              "正忙" in str(busy_error)
+              and "添加并启用" not in str(busy_error), str(busy_error))
+        check("busy wait is bounded", waited >= 0.15, waited)
+        pool.release(acct)
+
+    C.save_config(ACCOUNTS, {"max_concurrent": cfg_before["max_concurrent"],
+                             "busy_wait_seconds": C.BUSY_WAIT_SECONDS})
+    acct.models = models_before
 
     print("== credit exhausted cooldown ==")
     credit_message = (
