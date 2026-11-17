@@ -3195,6 +3195,14 @@ if(!window.__NEXT_UI__ && defaultConsoleLayout) {
     '日限额': 'Daily limit',
     '旧代理：': 'Old proxy:',
     '时间': 'Time',
+    '来源 IP': 'Source IP',
+    '地区': 'Region',
+    '来源 IP 归属地': 'Source IP region',
+    '账号 → 来源 IP': 'Account → source IP',
+    '按客户端地址汇总（全部历史）': 'Aggregated by client address (all history)',
+    '最近活动': 'Last seen',
+    '账号数': 'Accounts',
+    'IP 上线前': 'before IP tracking',
     '明细': 'Details',
     '显示条数:': 'Rows:',
     '普通/体验用户': 'Free/trial user',
@@ -3234,7 +3242,15 @@ if(!window.__NEXT_UI__ && defaultConsoleLayout) {
     '已关闭出口级瞬时失败退避': 'Egress-level transient backoff off',
 '账号级并发上限': 'Per-account concurrency cap',
 '一个上游账号同时最多接几个请求。0 = 不限（默认，跟没这个功能一样）；1 = 一个账号同时只接一个；N = 一个账号最多同时接 N 个。': 'How many requests one upstream account may serve at once. 0 = unlimited (the default, same as having no such feature); 1 = one request per account at a time; N = up to N at once per account.',
-'整个池子能同时接多少 = 账号数 × N（本机 24 个账号：1 → 24 个，3 → 72 个，10 → 240 个）。超出这个数的请求不排队，直接回「每个账号都在忙」，客户端自己重试。': 'Total capacity = accounts x N (24 accounts here: 1 -> 24, 3 -> 72, 10 -> 240 simultaneous requests). Requests beyond that are not queued: they are answered straight away with "every account is busy" and the client retries.',
+    '整个池子能同时接多少 = 账号数 × N（本机 26 个账号：1 → 26 个，3 → 78 个，10 → 260 个）。超出这个数的请求会先在下面「排队等待」里等名额，等到再发出去；只有排队预算用完才回「每个账号都在忙」。': 'How many requests the whole pool can run at once = accounts × N (26 accounts here: 1 -> 26, 3 -> 78, 10 -> 260). Requests above that wait for a seat in "Queue while the pool is empty" below; only when that budget runs out do they get "every account is busy".',
+    '池子暂时没号时排队等待': 'Queue while the account pool has no free account',
+    '高并发时每账号的在飞名额会被占满，或者整池刚被上游限流停放几十秒。默认这时立刻回「每个账号都在忙」，客户端看到的是「所有请求同时失败」，重试又去抢刚恢复的名额。设成 10–30 秒，这批请求原地等一个名额再生效：并发数不变，只是这一批慢一点。': 'Under high concurrency every per-account seat can be taken, or the whole pool just got rate-limited by the upstream for a few dozen seconds. By default such requests get "every account is busy" immediately, so the client sees every request failing at once and its retries grab the seats that just came back. Set 10-30 seconds and those requests wait for a seat in place: concurrency stays the same, only this batch is slower.',
+    '只在「一个可用账号都挑不出来」时生效；试过一圈账号都失败（上游真故障）不排队，直接报错。预算最长 120 秒，再长客户端自己就先超时了。': 'Only applies when not a single usable account can be picked; a full round of accounts that all failed (a real upstream outage) never queues, it errors out immediately. The budget is capped at 120 seconds - beyond that the client itself times out first.',
+    '请输入 0 到 120 的整数（0 = 不排队）': 'Enter a whole number from 0 to 120 (0 = no queueing)',
+    '池子超半数账号熔断时自动探活': 'Probe the pool automatically when over half of it is tripped',
+    '熔断、降权、软限流都是本地记账，而解除它们的唯一证据是一条真实成功的请求。超过这个比例的账号被这类窗口关着时，网关在后台自动跑一次「一键测试」，把其实已经能用的账号立刻放回池子；两次之间至少隔 2 分钟，免得把刚恢复的号又测回去。': 'Breakers, degradation and soft throttles are all local bookkeeping, and the only evidence that lifts them is a request the upstream actually served. When more than this share of the pool is held by those windows, the gateway runs one "test all" in the background and puts the accounts that do work straight back into the pool; runs are at least 2 minutes apart so a just-recovered account is not tripped again.',
+    '风控暂停期间不探（那时要继续停手），被上游 403 限制的账号也不探（探了等于换号再打上游）。填 0 = 关闭自动探活。': 'No probing while a risk-control pause is in effect (the right move then is to stay quiet), and accounts restricted by an upstream 403 are skipped (probing them means hitting the upstream again with another account). 0 = off.',
+    '请输入 0 到 100 的整数（0 = 关闭）': 'Enter a whole number from 0 to 100 (0 = off)',
 '它只防「同一瞬间两个请求压到同一个账号上」（上游按账号+分钟计 token，压一起会回 429、账号被停放）。它治不了「两个开场白相同的会话每轮互换账号」——那种情况每轮都丢缓存，要靠下面的「更稳的会话粘滞键」。': 'It only prevents two requests landing on the same account at the same instant (the upstream meters tokens per account per minute, and piling up there earns a 429 plus a parked account). It does not fix two conversations with the same opening line swapping accounts every turn - those lose their cache each turn and need the stable conversation key below.',
 '1 和 2–10 的实际区别：只有 1 能保证两个同开场白的会话不会同时撞进同一个号；2 以上只是把总容量放大，两个会话又能同时进同一个号（该撞还是撞）；10 在 24 个账号下基本等于「不限」，除非真的同时有 240 个以上请求。日常两三个会话用不到它，保持 0 即可。': 'What 1 versus 2-10 actually changes: only 1 guarantees two conversations with the same opening never share an account at the same time; 2 and above merely raise the total capacity and let those two conversations land on one account again (they still collide); 10 is effectively "unlimited" with 24 accounts unless you really have 240+ simultaneous requests. For two or three everyday conversations you do not need it - leave it at 0.',
 '为什么需要：上游按「账号 + 分钟」计 token，而一个大上下文会话单请求就带十几万 token。两个会话同时压在一个账号上，一分钟内很容易过百万 token，上游回 429；网关随即停放该账号并换号，新账号没有这段对话的前缀缓存，缓存命中率从 99% 掉到 0、首字从 1.5 秒涨到 5-6 秒。设成 1 时两个会话各走各的账号，各自保留缓存。': 'Why this exists: the upstream meters tokens per account per minute, and one large-context turn already carries over a hundred thousand tokens. Two conversations on one account easily pass a million tokens a minute, so the upstream answers 429; the gateway then parks that account and switches, and the new account holds none of the conversation prefix, so the cache hit rate drops from 99% to 0 and time-to-first-byte goes from 1.5s to 5-6s. At 1 each conversation keeps its own account and its own cache.',
@@ -6944,7 +6960,47 @@ html[data-ui="next"] #nextContent .console-shell > main {padding:24px;max-width:
     </div>
   </section>
 
-  <!-- ====================== ⑤ 折叠区 ====================== -->
+  <!-- ====================== ⑤ 来源 IP（客户端） ====================== -->
+  <!-- 一张表回答两个问题：「谁在烧 token」与「这个号被哪些客户端用过」。
+       数据来自 /usage/by-client-ip：全量视图，不跟区间选择器联动（理由同「按账号」），
+       因为它的用处是认出「同一个人换着号刷」或「一个号被几个人共用」。 -->
+  <section class="panel" id="clientIpPanel">
+    <div class="phead">
+      <h2>来源 IP</h2>
+      <span class="hint">按客户端地址汇总（全部历史）</span>
+      <div class="spacer"></div>
+      <button type="button" class="sec mini" id="clientIpRefresh">刷新</button>
+    </div>
+    <div class="pbody" style="overflow-x:auto">
+      <table class="dim" id="clientIpTable">
+        <thead><tr>
+          <th>来源 IP</th>
+          <th>地区</th>
+          <th class="num">请求</th>
+          <th>Token</th>
+          <th data-label="账号">账号数</th>
+          <th>最近活动</th>
+        </tr></thead>
+        <tbody id="clientIpBody"><tr><td class="skel">加载中…</td></tr></tbody>
+      </table>
+      <details class="fold" id="foldAccountIps" style="margin-top:12px;border:0;box-shadow:none;background:transparent">
+        <summary><h2>账号 → 来源 IP</h2><span class="chev">▶</span></summary>
+        <div class="fbody" style="overflow-x:auto">
+          <table class="dim" id="accountIpTable">
+            <thead><tr>
+              <th>账号</th>
+              <th class="num">请求</th>
+              <th>最近活动</th>
+              <th>来源 IP</th>
+            </tr></thead>
+            <tbody id="accountIpBody"><tr><td class="skel">加载中…</td></tr></tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <!-- ====================== ⑥ 折叠区 ====================== -->
   <div class="folds">
     <details class="fold" id="foldRemainBox">
       <summary><h2>剩余用量估算</h2><span class="chev">▶</span></summary>
@@ -7974,6 +8030,27 @@ html[data-ui="next"] #nextContent .console-shell > main {padding:24px;max-width:
           </div>
         </div>
       </section>
+      <section data-cat="network">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+          <div>
+            <h2 style="margin:0">来源 IP 归属地 <em id="setClientGeoState"></em></h2>
+            <div style="font-size:12px;color:var(--dim);margin-top:4px">
+              把「请求记录」和「来源 IP」里的客户端地址解析成省 / 市（如「江苏 苏州」），内网地址显示「内网」、本机显示「本机」。查询在后台线程里做，受 40 次 / 分钟限速、结果缓存 7 天；面板只读缓存，查不到就空着，绝不影响请求本身。默认开启。
+            </div>
+            <div style="font-size:12px;color:var(--warn);margin-top:4px">
+              开启后客户端地址会发给 ip-api.com 查询（失败时用 whois.pconline.com.cn 兜底），地址因此离开本机；对隐私敏感的部署可以关掉——关闭只停新查询，已经查到的地区照旧显示。
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">
+              <input id="setClientGeo" type="checkbox" style="width:16px;height:16px">
+              显示地区
+            </label>
+            <button onclick="saveClientGeo(this)">保存</button>
+          </div>
+        </div>
+      </section>
+
       <section data-cat="stability">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
           <div>
@@ -8083,7 +8160,7 @@ html[data-ui="next"] #nextContent .console-shell > main {padding:24px;max-width:
               一个上游账号同时最多接几个请求。0 = 不限（默认，跟没这个功能一样）；1 = 一个账号同时只接一个；N = 一个账号最多同时接 N 个。
             </div>
             <div style="font-size:12px;color:var(--dim);margin-top:4px">
-              整个池子能同时接多少 = 账号数 × N（本机 24 个账号：1 → 24 个，3 → 72 个，10 → 240 个）。超出这个数的请求不排队，直接回「每个账号都在忙」，客户端自己重试。
+              整个池子能同时接多少 = 账号数 × N（本机 26 个账号：1 → 26 个，3 → 78 个，10 → 260 个）。超出这个数的请求会先在下面「排队等待」里等名额，等到再发出去；只有排队预算用完才回「每个账号都在忙」。
             </div>
             <div style="font-size:12px;color:var(--warn);margin-top:4px">
               它只防「同一瞬间两个请求压到同一个账号上」（上游按账号+分钟计 token，压一起会回 429、账号被停放）。它治不了「两个开场白相同的会话每轮互换账号」——那种情况每轮都丢缓存，要靠下面的「更稳的会话粘滞键」。
@@ -8098,6 +8175,48 @@ html[data-ui="next"] #nextContent .console-shell > main {padding:24px;max-width:
               个 / 账号
             </label>
             <button onclick="saveAccountConcurrent(this)">保存</button>
+          </div>
+        </div>
+      </section>
+
+      <section data-cat="limits">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+          <div>
+            <h2 style="margin:0">池子暂时没号时排队等待 <em id="setAccountQueueState"></em></h2>
+            <div style="font-size:12px;color:var(--dim);margin-top:4px">
+              高并发时每账号的在飞名额会被占满，或者整池刚被上游限流停放几十秒。默认这时立刻回「每个账号都在忙」，客户端看到的是「所有请求同时失败」，重试又去抢刚恢复的名额。设成 10–30 秒，这批请求原地等一个名额再生效：并发数不变，只是这一批慢一点。
+            </div>
+            <div style="font-size:12px;color:var(--dim);margin-top:4px">
+              只在「一个可用账号都挑不出来」时生效；试过一圈账号都失败（上游真故障）不排队，直接报错。预算最长 120 秒，再长客户端自己就先超时了。
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">
+              <input id="setAccountQueue" type="number" min="0" max="120" step="1" style="width:90px">
+              秒
+            </label>
+            <button onclick="saveAccountQueue(this)">保存</button>
+          </div>
+        </div>
+      </section>
+
+      <section data-cat="limits">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+          <div>
+            <h2 style="margin:0">池子超半数账号熔断时自动探活 <em id="setAutoProbeState"></em></h2>
+            <div style="font-size:12px;color:var(--dim);margin-top:4px">
+              熔断、降权、软限流都是本地记账，而解除它们的唯一证据是一条真实成功的请求。超过这个比例的账号被这类窗口关着时，网关在后台自动跑一次「一键测试」，把其实已经能用的账号立刻放回池子；两次之间至少隔 2 分钟，免得把刚恢复的号又测回去。
+            </div>
+            <div style="font-size:12px;color:var(--dim);margin-top:4px">
+              风控暂停期间不探（那时要继续停手），被上游 403 限制的账号也不探（探了等于换号再打上游）。填 0 = 关闭自动探活。
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;min-height:40px">
+              <input id="setAutoProbe" type="number" min="0" max="100" step="1" style="width:90px">
+              %
+            </label>
+            <button onclick="saveAutoProbe(this)">保存</button>
           </div>
         </div>
       </section>
@@ -15471,7 +15590,7 @@ async function refreshInner(gen){
   lastRecentFp = recentFp;
   COST_TIP_ROWS.clear();
   const buildRecentTable = tableRows => (RECENT_RENDER.tableRows = tableRows).length ?
-    '<table class="data-cards"><thead><tr><th>时间</th><th>模型</th><th>推理强度</th><th>账号</th><th>API Key</th><th>模式</th><th>结果</th><th>耗时</th><th>首字</th><th>速度</th><th>输入</th><th>输出</th><th>思考</th><th>缓存</th><th>总 token</th><th>积分</th><th class="pricing-col" style="color:var(--warn)">估算价格</th></tr></thead><tbody>'
+    '<table class="data-cards"><thead><tr><th>时间</th><th>模型</th><th>推理强度</th><th>账号</th><th>API Key</th><th>来源 IP</th><th>模式</th><th>结果</th><th>耗时</th><th>首字</th><th>速度</th><th>输入</th><th>输出</th><th>思考</th><th>缓存</th><th>总 token</th><th>积分</th><th class="pricing-col" style="color:var(--warn)">估算价格</th></tr></thead><tbody>'
     + tableRows.map((r, i) => {
         // 关闭时不登记悬停明细，也不挂 data-cost-key：列还在（观感不变），
         // 但没有任何可解释的价格，省掉整张表的明细构建与 hover 开销。
@@ -15483,6 +15602,10 @@ async function refreshInner(gen){
         + '<td data-label="推理强度">' + (r.reasoning_effort ? ('<span class="badge-effort">' + esc(r.reasoning_effort) + '</span>') : '<span style="color:var(--dim)">—</span>') + '</td>'
         + '<td class="mono" style="font-size:11px;color:var(--dim)" data-label="账号" title="' + esc(r.account||'') + '">' + esc(acctName(r.account)) + '</td>'
         + '<td class="mono c-key" style="font-size:11px;color:var(--dim)" data-label="API Key" title="' + esc(r.key||'') + '">' + esc(r.key_name || '—') + '</td>'
+        + '<td class="mono" style="font-size:11px;color:var(--dim)" data-label="来源 IP" title="' + esc(r.client_ip||'') + '">'
+        +   esc(r.client_ip || '—')
+        +   (r.client_ip_geo ? '<div style="font-size:10px;color:var(--dim2)">' + esc(r.client_ip_geo) + '</div>' : '')
+        + '</td>'
         + '<td data-label="模式"><span class="badge ' + (r.stream?'s':'') + '">' + (r.stream?'流式':'非流式') + '</span></td>'
         + '<td data-label="结果">' + outcomeBadge(r, i) + '</td>'
         + '<td class="c-elapsed" data-label="耗时">' + ms(r.elapsed_ms) + '</td>'
@@ -15620,7 +15743,7 @@ function renderRecentView(){
   const serverCount = recentServerFilters().length;
   const rows = RECENT_RENDER.rows.filter(r => {
     if(!q) return true;
-    return [r.model, RECENT_RENDER.acctName(r.account), r.account, r.key_name, r.key]
+    return [r.model, RECENT_RENDER.acctName(r.account), r.account, r.key_name, r.key, r.client_ip, r.client_ip_geo]
       .some(v => String(v || '').toLowerCase().includes(q));
   });
   const count = document.getElementById('recentFilterCount');
@@ -17837,6 +17960,14 @@ async function loadSettings(showToast, opts){
         egressBackoffState.textContent = egressBackoff ? '(已启用)' : '(未启用)';
         egressBackoffState.style.color = egressBackoff ? 'var(--accent2)' : 'var(--dim)';
       }
+      const clientGeo = data.client_geo_enabled !== false;
+      const clientGeoInput = document.getElementById('setClientGeo');
+      if(clientGeoInput) clientGeoInput.checked = clientGeo;
+      const clientGeoState = document.getElementById('setClientGeoState');
+      if(clientGeoState){
+        clientGeoState.textContent = clientGeo ? '(已启用)' : '(已关闭)';
+        clientGeoState.style.color = clientGeo ? 'var(--accent2)' : 'var(--dim)';
+      }
       const poolSeparation = data.pool_separation_enabled === true;
       const poolSeparationEffective = data.pool_separation_effective === true;
       const poolSeparationInput = document.getElementById('setPoolSeparation');
@@ -17889,6 +18020,27 @@ async function loadSettings(showToast, opts){
       if(accountConcurrentState){
         accountConcurrentState.textContent = accountConcurrent > 0 ? '(' + accountConcurrent + ' 个 / 账号)' : '(不限)';
         accountConcurrentState.style.color = accountConcurrent > 0 ? 'var(--accent2)' : 'var(--dim)';
+      }
+      const accountQueue = (typeof data.account_queue_seconds === 'number') ? data.account_queue_seconds : 0;
+      const accountQueueInput = document.getElementById('setAccountQueue');
+      if(accountQueueInput) accountQueueInput.value = accountQueue;
+      const accountQueueState = document.getElementById('setAccountQueueState');
+      if(accountQueueState){
+        accountQueueState.textContent = accountQueue > 0 ? '(' + accountQueue + ' 秒)' : '(不排队)';
+        accountQueueState.style.color = accountQueue > 0 ? 'var(--accent2)' : 'var(--dim)';
+      }
+      const autoProbe = (typeof data.auto_probe_percent === 'number') ? data.auto_probe_percent : 50;
+      const autoProbeInput = document.getElementById('setAutoProbe');
+      if(autoProbeInput) autoProbeInput.value = autoProbe;
+      const autoProbeState = document.getElementById('setAutoProbeState');
+      if(autoProbeState){
+        const autoProbeLast = (data.auto_probe && data.auto_probe.last) || null;
+        let autoProbeSuffix = '';
+        if(autoProbeLast && autoProbeLast.tested){
+          autoProbeSuffix = '，上次 ' + autoProbeLast.passed + '/' + autoProbeLast.tested + ' 通过';
+        }
+        autoProbeState.textContent = autoProbe > 0 ? ('(超过 ' + autoProbe + '%' + autoProbeSuffix + ')') : '(关闭)';
+        autoProbeState.style.color = autoProbe > 0 ? 'var(--accent2)' : 'var(--dim)';
       }
       const affinityStableKey = data.affinity_stable_key_enabled === true;
       const affinityStableKeyInput = document.getElementById('setAffinityStableKey');
@@ -19140,6 +19292,48 @@ async function saveAccountConcurrent(btn){
   }
 }
 
+/* 池子暂时没号时的排队预算：0 = 不排队，1..120 = 最多等这么多秒。 */
+async function saveAccountQueue(btn){
+  const el = document.getElementById('setAccountQueue');
+  const raw = (el && el.value !== '') ? Number(el.value) : NaN;
+  const value = Math.floor(raw);
+  if(!isFinite(value) || value < 0 || value > 120){
+    toast('请输入 0 到 120 的整数（0 = 不排队）', 'bad');
+    return;
+  }
+  if(btn) btn.disabled = true;
+  try {
+    await postJSON('/settings/save', {account_queue_seconds: value});
+    toast(value > 0 ? ('已保存：池子没号时最多等 ' + value + ' 秒') : '已保存：池子没号时不排队', 'ok');
+    loadSettings();
+  } catch(e) {
+    toast('保存失败: ' + e.message, 'bad');
+  } finally {
+    if(btn) btn.disabled = false;
+  }
+}
+
+/* 池子超半数账号被本地熔断关着时自动探活：0 = 关闭，1..100 = 百分比阈值。 */
+async function saveAutoProbe(btn){
+  const el = document.getElementById('setAutoProbe');
+  const raw = (el && el.value !== '') ? Number(el.value) : NaN;
+  const value = Math.floor(raw);
+  if(!isFinite(value) || value < 0 || value > 100){
+    toast('请输入 0 到 100 的整数（0 = 关闭）', 'bad');
+    return;
+  }
+  if(btn) btn.disabled = true;
+  try {
+    await postJSON('/settings/save', {auto_probe_percent: value});
+    toast(value > 0 ? ('已保存：超过 ' + value + '% 账号熔断时自动探活') : '已保存：关闭自动探活', 'ok');
+    loadSettings();
+  } catch(e) {
+    toast('保存失败: ' + e.message, 'bad');
+  } finally {
+    if(btn) btn.disabled = false;
+  }
+}
+
 async function saveEgressBackoff(btn){
   const el = document.getElementById('setEgressBackoff');
   const value = !!(el && el.checked);
@@ -19147,6 +19341,20 @@ async function saveEgressBackoff(btn){
   try {
     await postJSON('/settings/save', {egress_backoff_enabled: value});
     toast(value ? '已启用：出口级瞬时失败退避' : '已关闭出口级瞬时失败退避', 'ok');
+    loadSettings();
+  } catch(e) {
+    toast('保存失败: ' + e.message, 'bad');
+  } finally {
+    if(btn) btn.disabled = false;
+  }
+}
+async function saveClientGeo(btn){
+  const el = document.getElementById('setClientGeo');
+  const value = !!(el && el.checked);
+  if(btn) btn.disabled = true;
+  try {
+    await postJSON('/settings/save', {client_geo_enabled: value});
+    toast(value ? '已启用：来源 IP 自动显示地区' : '已关闭地区查询（已有缓存保留）', 'ok');
     loadSettings();
   } catch(e) {
     toast('保存失败: ' + e.message, 'bad');
@@ -19171,7 +19379,6 @@ async function savePoolSeparation(btn){
     if(btn) btn.disabled = false;
   }
 }
-
 async function saveRestrictionHold(btn){
   const el = document.getElementById('setRestrictionHoldSeconds');
   const val = parseInt(el ? el.value : '1800', 10);
@@ -23315,6 +23522,101 @@ async function loadRange(polled){
   drawSparks();
   renderDim();
   loadRecent();
+  loadClientIps();
+}
+
+/* ---------------- 来源 IP（/usage/by-client-ip） ----------------
+   一张表两问：「谁在烧 token」与「这个号被哪些客户端用过」。全量视图，
+   不跟区间选择器联动（理由同「按账号」：区间切了也还是同一批客户端）。
+   载荷带 15 秒 TTL + ETag，5 秒一轮的轮询多数落在 304 上：不重建、不重传。 */
+const escHtml = s => String(s == null ? '' : s).replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let lastClientIpFp = null;
+
+function relAgo(epoch){
+  if(!epoch) return '—';
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - epoch));
+  if(s < 60) return s + ' 秒前';
+  if(s < 3600) return Math.floor(s / 60) + ' 分钟前';
+  if(s < 86400) return Math.floor(s / 3600) + ' 小时前';
+  return Math.floor(s / 86400) + ' 天前';
+}
+
+/* 账号显示名：池子里的昵称优先（analytics 里带着 uid→nickname），
+   没有就退到 uid 前 8 位——聚合载荷只带 uid，没有昵称。 */
+function clientIpAccountLabel(uid){
+  const list = (state.analytics && state.analytics.accounts) || [];
+  const hit = list.find(a => a.uid === uid);
+  if(hit && hit.nickname) return hit.nickname;
+  return String(uid || '').slice(0, 8) || '—';
+}
+
+async function loadClientIps(){
+  try{
+    const data = await api('/usage/by-client-ip');
+    renderClientIps(data);
+  }catch(err){
+    console.error('loadClientIps failed:', err);
+  }
+}
+
+function renderClientIps(data){
+  const body = $('clientIpBody');
+  if(!body) return;
+  const ips = (data && data.ips) || [];
+  const accounts = (data && data.accounts) || [];
+  // 指纹守卫：载荷没变就不碰 DOM（面板 5 秒一轮，重写几十行 innerHTML 是白付的）。
+  const fp = JSON.stringify(data);
+  if(fp === lastClientIpFp && body.innerHTML) return;
+  lastClientIpFp = fp;
+
+  if(!ips.length){
+    body.innerHTML = '<tr><td colspan="6" class="skel">暂无数据</td></tr>';
+  }else{
+    const top = ips.slice(0, 30);
+    const maxTok = Math.max(1, ...top.map(r => r.total_tokens || 0));
+    body.innerHTML = top.map(r => {
+      const accts = r.accounts || [];
+      const chips = accts.slice(0, 3).map(function(pair){
+        const uid = pair[0], n = pair[1];
+        return '<span style="display:inline-block;padding:1px 5px;margin:1px 3px 1px 0;border:1px solid var(--line);border-radius:4px;font-size:10.5px;color:var(--dim);white-space:nowrap" data-tip="' + escHtml(uid) + '">' + escHtml(clientIpAccountLabel(uid)) + ' ×' + n + '</span>';
+      }).join('');
+      const more = accts.length > 3 ? '<span style="font-size:10.5px;color:var(--dim2)">…</span>' : '';
+      const legacy = r.ip === '(未知)' ? ' <span style="font-size:10px;color:var(--dim2)">IP 上线前</span>' : '';
+      const models = (r.models || []).map(function(pair){ return pair[0] + ' ×' + pair[1]; }).join(' · ');
+      const pct = (r.total_tokens || 0) / maxTok * 100;
+      return '<tr>'
+        + '<td class="mono" data-label="来源 IP"' + (models ? ' data-tip="' + escHtml(models) + '"' : '') + '>' + escHtml(r.ip) + legacy + '</td>'
+        // 地区由后端从缓存里带（/usage/by-client-ip 的 ips[].geo）；还没查到就空着，
+        // 5 秒后的下一次轮询会补上。
+        + '<td data-label="地区" style="font-size:11px;color:var(--dim2)">' + escHtml(r.geo || '—') + '</td>'
+        + '<td class="num">' + numSpan(r.requests) + '</td>'
+        + '<td><div class="tokcell"><span class="t">' + numSpan(r.total_tokens) + '</span><div class="minibar"><i style="width:' + Math.max(2, pct) + '%;--bar-color:var(--accent)"></i></div></div></td>'
+        + '<td data-label="账号"><b style="font-variant-numeric:tabular-nums">' + accts.length + '</b>' + chips + more + '</td>'
+        + '<td data-label="最近活动"><span data-tip="' + escHtml(relAgo(r.last_at)) + '">' + escHtml(fmtTime(r.last_at || 0)) + '</span></td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  const abody = $('accountIpBody');
+  if(!abody) return;
+  if(!accounts.length){
+    abody.innerHTML = '<tr><td colspan="4" class="skel">暂无数据</td></tr>';
+    return;
+  }
+  abody.innerHTML = accounts.slice(0, 60).map(function(r){
+    const list = (r.ips || []).slice(0, 6).map(function(pair){
+      const ip = pair[0], n = pair[1];
+      return '<span class="mono" style="display:inline-block;padding:1px 5px;margin:1px 3px 1px 0;border:1px solid var(--line);border-radius:4px;font-size:10.5px;color:var(--dim);white-space:nowrap">' + escHtml(ip) + ' ×' + n + '</span>';
+    }).join('');
+    const more = (r.ips || []).length > 6 ? '<span style="font-size:10.5px;color:var(--dim2)">…</span>' : '';
+    return '<tr>'
+      + '<td data-label="账号" data-tip="' + escHtml(r.account) + '">' + escHtml(clientIpAccountLabel(r.account)) + '</td>'
+      + '<td class="num">' + numSpan(r.requests) + '</td>'
+      + '<td data-label="最近活动"><span data-tip="' + escHtml(relAgo(r.last_at)) + '">' + escHtml(fmtTime(r.last_at || 0)) + '</span></td>'
+      + '<td data-label="来源 IP">' + list + more + '</td>'
+      + '</tr>';
+  }).join('');
 }
 
 async function loadStatic(){
@@ -24076,6 +24378,12 @@ if(dimColumnsBtn && dimColumnsMenu){
   });
 }
 renderDimColumnsMenu();
+/* 来源 IP 面板的「刷新」：正常轮询已经 5 秒一轮，这个按钮是给「刚发完请求想
+   立刻看一眼是谁发的」用的——不额外传参，服务端 15 秒 TTL 内多半直接 304。 */
+{
+  const btn = $('clientIpRefresh');
+  if(btn) btn.addEventListener('click', function(){ loadClientIps(); });
+}
 window.addEventListener('resize', () => { drawSeries(); drawSparks(); });
 
 /* 数字悬停：复用面板全局 [data-tip] 气泡（ensureHoverTip 的委托监听），
@@ -24111,11 +24419,13 @@ function wbaTick(){
 window.loadAnalytics = wbaTick;            /* 面板 5s 轮询 / 切页 / 回前台统一入口 */
 window.loadAnalyticsMatrix = function(){}; /* 旧性能矩阵已并入本页（性能分位折叠区） */
 window.wbaLoad = wbaTick;                  /* 调试入口 */
+/* 来源 IP 面板的取数/渲染出口（调试用，同时给 tests/_test_client_ip_panel.js 留门）。 */
+window.wbaClientIps = {load: loadClientIps, render: renderClientIps};
 /* 面板每 5 秒扫描全页表格并自动接排序（applyAllTableSorts）：把本页表格登记进
    禁排名单，避免表头被挂上排序箭头、破坏紧凑版式。剩余用量 / 积分扣减 / 积分
    获取三张表沿用原版的排序接线（自带 id 且已登记），不在此列。 */
 if (typeof SORT_DENY_TABLES !== 'undefined' && SORT_DENY_TABLES && SORT_DENY_TABLES.add){
-  ['dimTable', 'foldPerf'].forEach(function(id){ SORT_DENY_TABLES.add(id); });
+  ['dimTable', 'clientIpTable', 'accountIpTable', 'foldPerf'].forEach(function(id){ SORT_DENY_TABLES.add(id); });
 }
 
 })();

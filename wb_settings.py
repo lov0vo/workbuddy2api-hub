@@ -132,6 +132,11 @@ REMAINING_PRIORITY_ENABLED_KEY = "remaining_priority_enabled"
 # 派发路径上的失败归账与退避尺度，老安装保持原样（传输错误仍喂账号熔断）。
 EGRESS_BACKOFF_ENABLED_KEY = "egress_backoff_enabled"
 
+# 来源 IP 归属地（面板只读）：把请求记录里的客户端地址解析成「江苏 苏州」。
+# 缺失键读作开 —— 这是纯展示信息，查不到就空着，不影响任何派发决定；默认开
+# 是因为「谁在用」这件事本身就是面板要回答的问题。关掉只停查询，已有缓存仍
+# 能显示（关开关不该让面板突然空白）。
+CLIENT_GEO_ENABLED_KEY = "client_geo_enabled"
 # 文本 / 媒体号池隔离：默认关闭，所有账号都可同时服务文本与媒体请求。
 # 只有显式打开后才按账号的 poolScope 过滤；独立入口 WB_POOL_SCOPE 仍强制
 # 隔离（见 wb_pool_scope），因为那种部署本来就各带一套账号目录。
@@ -155,6 +160,16 @@ REALM_FALLBACK_ENABLED_KEY = "realm_fallback_enabled"
 ACCOUNT_MAX_CONCURRENT_KEY = "account_max_concurrent"
 #: 上限值域：0 = 不限；1..10 是「每账号同时几个」。10 只是防手滑的上界。
 ACCOUNT_MAX_CONCURRENT_MAX = 10
+
+# 池子里「暂时」没有可用账号时排队等多久（秒）。默认 0 = 不排队，老安装行为不变。
+#
+# 为什么需要它：两种「暂时没有」在高并发下很常见——每账号的在飞名额全被占满（几秒
+# 就释放），或整池刚被上游 429 停放（几十秒到几分钟）。此时立刻回 503 会让客户端
+# 看到「所有请求同时失败」，而失败重试又会去抢刚恢复的名额，把池子再抢空一次；
+# 排队等一等，客户端看到的只是这一批请求慢了，而不是全挂。
+ACCOUNT_QUEUE_SECONDS_KEY = "account_queue_seconds"
+#: 值域 0..120 秒：再长客户端自己就先超时了，排队也就失去意义。
+ACCOUNT_QUEUE_SECONDS_MAX = 120
 
 
 DESKTOP_CHAT_COMPAT_KEY = "desktop_chat_compat"
@@ -202,6 +217,84 @@ def set_account_max_concurrent(accounts_dir, value):
     with _lock:
         data = load(accounts_dir)
         data[ACCOUNT_MAX_CONCURRENT_KEY] = value
+        save(accounts_dir, data)
+    return value
+
+
+def account_queue_seconds(accounts_dir):
+    """How long a request may wait for an account when the pool has none ready.
+
+    0 (the default) means no waiting: the request fails with the usual 503 the
+    moment every account is cooling down or every per-account seat is taken.
+    Unreadable values fall back to 0 so a hand-edited settings.json can never
+    turn a fast failure into a hidden stall.
+    """
+    value = load(accounts_dir).get(ACCOUNT_QUEUE_SECONDS_KEY)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    if value < 0 or value > ACCOUNT_QUEUE_SECONDS_MAX:
+        return 0
+    return value
+
+
+def set_account_queue_seconds(accounts_dir, value):
+    """Persist the pool-wait budget. Returns the stored whole number."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("account_queue_seconds must be a whole number")
+    if value < 0:
+        raise ValueError("account_queue_seconds cannot be less than 0")
+    if value > ACCOUNT_QUEUE_SECONDS_MAX:
+        raise ValueError("account_queue_seconds cannot be more than %d"
+                         % ACCOUNT_QUEUE_SECONDS_MAX)
+    with _lock:
+        data = load(accounts_dir)
+        data[ACCOUNT_QUEUE_SECONDS_KEY] = value
+        save(accounts_dir, data)
+    return value
+
+
+# 池子里超过这个比例的账号被**本地熔断**关着时，后台自动跑一次一键测试。
+# 0 = 关闭（默认 50，即「超过一半账号熔断」）。
+#
+# 为什么需要它：熔断/降权/软限流都是本地记账（连续硬失败 3 次起熔断 30 分钟），
+# 而解除它们的唯一证据是「一条真实成功的请求」。池子被打成半瘫之后，剩下的账号
+# 又是同一条线路、同一批上游窗口，很容易一起趴下，接着每个请求都立刻 503，客户端
+# 的重试又把刚恢复的名额抢空——2026-11 生产日志里 248 次 "no usable account" 就是
+# 这么来的。自动探活只解决「本地记账把能用的账号关在门外」这一种情况：风控暂停
+# 期间不探（那是要继续停手），被 403 限制的账号也不探（探了等于换号再打上游）。
+AUTO_PROBE_PERCENT_KEY = "auto_probe_percent"
+#: 值域 0..100（百分比）。0 = 关闭自动探活。
+AUTO_PROBE_PERCENT_DEFAULT = 50
+AUTO_PROBE_PERCENT_MAX = 100
+
+
+def auto_probe_percent(accounts_dir):
+    """超过这个百分比的账号被本地熔断关着时，自动探活一轮。0 = 关闭。
+
+    Unreadable values fall back to the default rather than to 0: this switch is
+    a safety net, and silently turning it off is worse than using the shipped
+    threshold. An explicit 0 in settings.json still disables it.
+    """
+    value = load(accounts_dir).get(AUTO_PROBE_PERCENT_KEY)
+    if isinstance(value, bool) or not isinstance(value, int):
+        return AUTO_PROBE_PERCENT_DEFAULT
+    if value < 0 or value > AUTO_PROBE_PERCENT_MAX:
+        return AUTO_PROBE_PERCENT_DEFAULT
+    return value
+
+
+def set_auto_probe_percent(accounts_dir, value):
+    """Persist the auto-probe threshold. Returns the stored whole percentage."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("auto_probe_percent must be a whole number")
+    if value < 0:
+        raise ValueError("auto_probe_percent cannot be less than 0")
+    if value > AUTO_PROBE_PERCENT_MAX:
+        raise ValueError("auto_probe_percent cannot be more than %d"
+                         % AUTO_PROBE_PERCENT_MAX)
+    with _lock:
+        data = load(accounts_dir)
+        data[AUTO_PROBE_PERCENT_KEY] = value
         save(accounts_dir, data)
     return value
 
@@ -1687,8 +1780,8 @@ def set_ui_language(accounts_dir, value):
 
 
 UPSTREAM_DEFAULTS = {
-    "header_timeout_seconds": 120,
-    "idle_timeout_seconds": 300,
+    "header_timeout_seconds": 45,
+    "idle_timeout_seconds": 90,
     "device_token": "",
     "device_token_file": "",
 }
@@ -2435,6 +2528,28 @@ def set_egress_backoff_enabled(accounts_dir, enabled):
     with _lock:
         data = load(accounts_dir)
         data[EGRESS_BACKOFF_ENABLED_KEY] = enabled
+        save(accounts_dir, data)
+    return enabled
+
+
+def client_geo_enabled(accounts_dir):
+    """Whether the panel resolves the region of a client address.
+
+    On unless the operator turns it off: the answer is decoration only (a
+    provider that is unreachable leaves the column empty, never a failed
+    request), and the lookups run off the request path in a rate-limited
+    background thread (see wb_client_geo). Turning it off stops new lookups;
+    entries already cached stay visible.
+    """
+    return load(accounts_dir).get(CLIENT_GEO_ENABLED_KEY) is not False
+
+
+def set_client_geo_enabled(accounts_dir, enabled):
+    """Persist the client-region switch. Returns the stored boolean."""
+    enabled = bool(enabled)
+    with _lock:
+        data = load(accounts_dir)
+        data[CLIENT_GEO_ENABLED_KEY] = enabled
         save(accounts_dir, data)
     return enabled
 

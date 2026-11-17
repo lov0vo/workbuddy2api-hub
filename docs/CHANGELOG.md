@@ -1,3 +1,13 @@
+## v2.2.0
+
+- **合并上游 v2.0.4 – v2.1.3**（110 个文件，+15394 / -1612）：
+  - v2.1.3：CodeArts 并发占满改为有界排队（busy_wait_seconds 默认 10，超时 429 带 reset_at）、工具 Schema 关键字类型纠偏（修上游 code 11129）、清理合并遗留的重复顶层定义、运营活动任务自动化（星巴克 3 次小程序 + 专家对话、记者节 expert / interview-material-organizer / playbook_prompt_send）、活动与成长任务解耦、skill_share 真实技能分享、template_5 真实场景。
+  - v2.1.2：请求列表失败详情与服务端筛选、CodeArts 请求积分按差值结算、WB_SANITIZE_LOOSE_BILLING 宽松计费头兜底、Key 级日 token 限量 daily_token_limit、Key 并发上限改有界排队（WB_CHAT_SLOT_WAIT 默认 30）、面板回显 concurrency_limit、WB_MSGSTAT_SHARDS 单发 /v1/messages 稳定亲和键、第 2 轮继承第 1 轮绑定。
+  - v2.1.1 / v2.1.0：设备 Token 与桌面 chat 兼容头、文本 / 媒体号池隔离（pool_separation_enabled）、历史思考镜像、空文本段补位、Responses 历史推理保真、订阅桥接、一键启动工作台等。
+- **本分支增强全部保留**：请求来源 IP 全链路（access / chat / usage 行）、面板「来源 IP」聚合视图与按地区搜索、来源 IP 归属地（wb_client_geo.py，ip-api.com 主 / pconline 兜底，40 次/分钟限速、7 天缓存、client_geo_enabled 开关）、账号池排队等待（account_queue_seconds）、池子超半数熔断自动探活（auto_probe_percent）、上游超时首字节 45 秒 / 流中空闲 90 秒、listen backlog 1024、OpenWrt PKG_VERSION 跟随源码。
+- **版本号**：2.2.0（本分支独立递增；上游 v2.1.x 与本分支 v2.1.1 无对应关系，历史同名 tag 不再改动）。
+- 全量测试：**314 个套件：234 个 Python + 80 个 JS，`311 passed, 3 failed, 0 skipped`**（3 项均为 v2.1.1 基线已有的历史失败：`_test_breaker_fairness`、`_test_egress_backoff`、`_test_pool_backoff`，与本次合并无关）。
+
 ## v2.1.3
 
 - **CodeArts 并发占满改为有界排队**（#886 / #887）：单账号并发槽被占满时最多等待 `busy_wait_seconds`（默认 10 秒，范围 0–120），名额释放通过 `Condition` 立即唤醒；超时返回可重试的 429 `rate_limit_error` 并带 `reset_at`，不再误报 502「没有可用的账号」。真正空池 / 全停用 / 全冷却仍提示添加账号；多账号仍优先选空闲账号。
@@ -87,6 +97,19 @@
 - **错误语义修正**：媒体路由始终存在；没有可用媒体账号时返回 `502 UPSTREAM`，不再返回会误导客户端的 `404 NO_ROUTE`。`/v1/media/models` 的 `enabled` 固定为 `true`，不再暴露已移除的出站身份字段。
 - **测试**：新增媒体设置默认值、旧字段兼容清理与部分保存回归；更新真实 HTTP 路由测试，覆盖无开关启动、Key 绑定出口优先与自动选择唯一媒体出口。
 - 全量测试：**286 个套件：217 个 Python + 69 个 JS，`286 passed, 0 failed, 0 skipped`**。
+## v2.1.1
+
+- **来源 IP 自动显示地区**：面板「请求记录」的来源 IP 列与「来源 IP」聚合视图现在给地址配上归属地（如「江苏 苏州」），内网地址显示「内网」、本机回环显示「本机」。查询走新增的 `wb_client_geo.py`（ip-api.com 为主、whois.pconline.com.cn 兜底），只在后台线程里跑并受 40 次 / 分钟限速，结果落 `usage/client-geo.json` 缓存 7 天（失败退避 10 分钟，上限 2000 条）；面板只读缓存，查不到就空着，请求路径从不等待这次查询。新增设置开关 `client_geo_enabled`（默认开；关闭只停新查询，已有缓存照旧显示）、`/ip/geo?ips=` 补查接口，「请求记录」的搜索框也能按地区筛选。
+- 全量测试：**293 个套件：221 个 Python + 72 个 JS，`293 passed, 0 failed, 0 skipped`**。
+
+## v2.1.0
+
+合并上游 ardeyouxipianyi/workbuddy2api-hub 的 v2.0.1 – v2.0.3（49 个提交），本分支此前的全部增强原样保留。
+
+- **合并上游基线**：可选 Go/uTLS 传输桥、设备 Token 与桌面 chat 兼容头、文本号池 / 媒体号池分区（#841）、历史思考镜像、空文本段先补位（#840）、Responses 历史推理保真（#831）、订阅桥接（#830）、一键启动工作台（#771）、国际版 DeepSeek 出站别名、CodeArts 出口徽章与模型准入、Clash fake-IP 放行等。
+- **本分支增强（已在生产使用）**：请求来源 IP 全链路（access / chat / usage 行）与面板「来源 IP」聚合视图；账号池排队等待（`account_queue_seconds`）与 listen backlog 1024；池子超半数账号被本地熔断关着时自动探活（`auto_probe_percent`）；上游超时收紧到首字节 45 秒 / 流中空闲 90 秒；OpenWrt `PKG_VERSION` 跟随源码。
+- **版本号策略**：本分支从 2.1.0 起独立递增，避免与上游 2.0.x 的 tag 撞名（历史上本分支已发布的 v2.0.1–v2.0.7 与上游同名 tag 指向不同提交）。
+- 全量测试：**291 个套件：220 个 Python + 71 个 JS，`291 passed, 0 failed, 0 skipped`**。
 
 ## v2.0.3
 

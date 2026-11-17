@@ -73,6 +73,7 @@ import wb_accounts
 import wb_activity
 import wb_atrest
 import wb_catalog
+import wb_client_geo
 import wb_codearts
 import wb_egress
 import wb_ipintel
@@ -1514,6 +1515,14 @@ def login_rate_limit_key(peer_ip, headers):
     if via_chain:
         return via_chain
     return peer_ip
+def client_ip_of(peer_ip, headers):
+    """请求的来源 IP，日志与用量行统一走这里。
+
+    语义与限流键完全一致：只有在 peer 可信（本机 / 反代）时才相信
+    X-Real-IP、X-Forwarded-For，否则直接取对端地址，避免客户端伪造头把日志
+    写成别人的 IP。永远返回非空串——日志里空字段比错字段更难排查。
+    """
+    return login_rate_limit_key(peer_ip or "", headers) or "-"
 _models_cache = {"intl": {"at": 0.0, "data": None}, "cn": {"at": 0.0, "data": None}}
 #: 目录来源追踪（面板展示用）：每个 realm 最近一次构建/刷新清单的出处。
 #: source 取值见 catalog_meta()；fetched_at 是网关拿到这批数据的时刻；
@@ -1836,7 +1845,7 @@ def _best_cached_tokens(usage):
 def record_usage(model, usage, stream=None, elapsed_ms=None, ttft_ms=None, gen_ms=None, fp=None,
                 account=None, outcome="completed", key=None, effort=None,
                 requested_model=None, realm=None, proxy_slot=None, proxy_exit=None,
-                kind="chat", media=None):
+                kind="chat", media=None, client_ip=None):
     """Record one finished request as exactly one JSONL row.
 
     A request without a usage block still gets a row (flagged usage_missing):
@@ -1898,6 +1907,10 @@ def record_usage(model, usage, stream=None, elapsed_ms=None, ttft_ms=None, gen_m
     # existed; the dashboard reports those as two different buckets, and a
     # missing field is the only evidence of the cutover that survives.
     row["key"] = key or ""
+    # 来源 IP：只在调用方能拿到时写。旧行没有这个字段，读的一侧按空处理，
+    # 所以面板/统计不需要迁移历史数据。
+    if client_ip:
+        row["client_ip"] = client_ip
     # The price policy this request is measured against, stored as a reference
     # so the table can be de-duplicated and swept. A row written before the
     # table existed has no reference and falls back to the timeline.
@@ -1936,13 +1949,14 @@ def record_usage(model, usage, stream=None, elapsed_ms=None, ttft_ms=None, gen_m
         key_tag = f" key={key_label(key)}" if key else ""
         speed_tag = f" {row.get('tokens_per_sec', 0)}t/s" if row.get("tokens_per_sec") else ""
         miss_tag = " usage=missing" if usage_missing else ""
+        ip_tag = f" ip={client_ip}" if client_ip else ""
         if kind == "chat":
-            log(f"chat done: model={model}{acc_tag}{egress_tag}{key_tag}{dur} tokens={t_tokens} (in={fields.get('prompt_tokens',0)} out={fields.get('completion_tokens',0)}){speed_tag}{miss_tag}", tag="chat")
+            log(f"chat done: model={model}{ip_tag}{acc_tag}{egress_tag}{key_tag}{dur} tokens={t_tokens} (in={fields.get('prompt_tokens',0)} out={fields.get('completion_tokens',0)}){speed_tag}{miss_tag}", tag="chat")
         else:
             # 媒体请求没有 token 概念，日志行只说"谁的哪个模型、花了多少、用多久"，
             # 并用 kind 当 tag，这样「运行日志」页能单独筛出媒体。
             credit_tag = (" %.2f 积分" % fields["credit"]) if fields.get("credit") else ""
-            log(f"{kind} done: model={model}{acc_tag}{egress_tag}{key_tag}{dur}{credit_tag}", tag=kind)
+            log(f"{kind} done: model={model}{ip_tag}{acc_tag}{egress_tag}{key_tag}{dur}{credit_tag}", tag=kind)
     except Exception:
         pass
     return row
@@ -1963,6 +1977,16 @@ def record_upstream_usage(upstream, requested_model, usage, **kwargs):
         kwargs.setdefault("proxy_slot", account.proxy_slot)
         kwargs.setdefault("proxy_exit", egress_exit(account.proxy))
     record_usage(billed_model, usage, requested_model=requested_model, **kwargs)
+
+
+def record_upstream_usage_for(handler, upstream, model, usage, **kwargs):
+    """记录上游实际计费模型的用量，并带上这次请求的来源 IP。
+
+    写成自由函数而不是 Handler 方法：有多处调用点在测试桩（SimpleNamespace、
+    FakeHandler）里被直接驱动，那些桩没有这个方法。
+    """
+    kwargs.setdefault("client_ip", getattr(handler, "client_ip", None))
+    return record_upstream_usage(upstream, model, usage, **kwargs)
 
 
 def _persist_usage(row, fail_label):
@@ -7219,6 +7243,9 @@ def recent_usage(limit=100, realm=None, page=1, account=None, model=None, key=No
         r["cost_band_note"] = cost["band_note"] if cost["known"] else None
         r["cost_via_derived"] = (bool(cost["via_derived"]) if cost["known"]
                                  else None)
+    # 来源 IP 的归属地：只读缓存，没缓存的地址在这里排进后台队列，下一次
+    # 轮询就带上（见 client_geo_annotate）。开关关闭时只剩本机 / 内网。
+    client_geo_annotate(page_rows)
     return {
         "total": total,
         "page": page,
@@ -8307,6 +8334,291 @@ def _usage_by_account_uncached():
     for item in out:
         item["models"] = sorted(item["models"].items(), key=lambda kv: -kv[1])[:5]
     return out
+
+
+# ---- 来源 IP 归属地（面板显示用，见 wb_client_geo）-------------------------
+# 这是一条「只读装饰」链路：面板每次轮询把行里的地址交给这里，命中缓存就直接
+# 给标签；没命中就丢进后台队列，由一个限速线程去问 ip-api / pconline，下一次
+# 轮询自然带上。请求路径从不等待这个查询——查不到就是空字符串，面板显示「—」。
+_geo_cache = None
+_geo_cache_lock = threading.Lock()
+_geo_state = {"enabled_at": 0.0, "enabled": True}
+_geo_pending = []          # 待查地址（去重、有上限），由 _geo_worker_loop 消费
+_geo_cond = threading.Condition()
+_geo_worker = {"thread": None}
+
+GEO_QUEUE_MAX = 200        # 面板公网暴露时扫描器会刷出大量一次性地址
+GEO_ENABLED_TTL = 5.0      # 设置文件 5 秒读一次，避免每行都读盘
+
+
+def client_geo_cache():
+    """当前 usage 目录下的归属地缓存（测试会替换 USAGE_DIR，所以按目录重建）。"""
+    global _geo_cache
+    with _geo_cache_lock:
+        if _geo_cache is None or _geo_cache.directory != USAGE_DIR:
+            _geo_cache = wb_client_geo.GeoCache(USAGE_DIR)
+        return _geo_cache
+
+
+def client_geo_enabled():
+    """面板是否查询归属地；5 秒内复用上一次读到的设置。"""
+    now = time.time()
+    if now - _geo_state["enabled_at"] < GEO_ENABLED_TTL:
+        return _geo_state["enabled"]
+    try:
+        value = wb_settings.client_geo_enabled(ACCOUNTS_DIR) is not False
+    except Exception:
+        value = False
+    _geo_state["enabled_at"] = now
+    _geo_state["enabled"] = value
+    return value
+
+
+def reset_client_geo_state():
+    """设置刚被改过：下一次读取重新问设置文件（改动立刻生效）。"""
+    _geo_state["enabled_at"] = 0.0
+
+
+def _geo_enqueue(ips):
+    """把还没查过的公网地址丢给后台线程；去重、限量，绝不阻塞调用方。"""
+    cache = client_geo_cache()
+    with _geo_cond:
+        for ip in ips:
+            ip = str(ip or "").strip()
+            if not wb_client_geo.is_address(ip) or wb_client_geo.local_label(ip):
+                continue
+            if ip in _geo_pending or len(_geo_pending) >= GEO_QUEUE_MAX:
+                continue
+            if cache.record(ip) is not None:
+                continue
+            _geo_pending.append(ip)
+        if not _geo_pending:
+            return
+        thread = _geo_worker["thread"]
+        if thread is None or not thread.is_alive():
+            _geo_worker["thread"] = threading.Thread(
+                target=_geo_worker_loop, name="client-geo", daemon=True)
+            _geo_worker["thread"].start()
+        _geo_cond.notify()
+
+
+def _geo_worker_loop():
+    """消费待查队列：一次一个地址，受限速闸门约束。
+
+    队列空置 5 分钟就退出，不常驻一条永远空转的线程；下一次有地址进来会重新
+    拉起（_geo_enqueue 里判断 is_alive）。
+    """
+    while True:
+        with _geo_cond:
+            while not _geo_pending:
+                if not _geo_cond.wait(timeout=300):
+                    if not _geo_pending:
+                        _geo_worker["thread"] = None
+                        return
+            ip = _geo_pending.pop(0)
+        cache = client_geo_cache()
+        if cache.record(ip) is not None:
+            continue
+        if not client_geo_enabled():
+            # 开关关掉：清空队列，别让线程继续打外部接口。
+            with _geo_cond:
+                _geo_pending.clear()
+            continue
+        if not cache.allow():
+            # 限速窗口满了：放回队首，等 2 秒再来（40 次 / 分钟的闸门）。
+            with _geo_cond:
+                _geo_pending.insert(0, ip)
+                _geo_cond.wait(timeout=2.0)
+            continue
+        try:
+            record = wb_client_geo.lookup(ip)
+        except Exception:
+            record = {}
+        cache.put(ip, record)
+
+
+def client_geo_annotate(rows):
+    """给 /usage/recent 的行补 client_ip_geo，把没缓存的地址排进后台队列。
+
+    关闭开关时仍然显示本机 / 内网：那两个标签是本地判断，不花一次外部请求。
+    """
+    enabled = client_geo_enabled()
+    cache = client_geo_cache() if enabled else None
+    pending = []
+    for row in rows:
+        ip = str(row.get("client_ip") or "").strip()
+        local = wb_client_geo.local_label(ip) if ip else ""
+        if not enabled or local:
+            row["client_ip_geo"] = local
+            continue
+        label = cache.label(ip)
+        row["client_ip_geo"] = label
+        if not label:
+            pending.append(ip)
+    if pending:
+        _geo_enqueue(pending)
+
+
+# ---- 按来源 IP 聚合（面板「来源 IP」）------------------------------------
+# 与 usage_by_account() 同构：一条缓存 + TTL，折算是增量的，重建在锁内做。
+# 多攒的是首末时间戳：面板要写「最近活动」，请求数/token 看不出来这个。
+# 注意这一份是**全量**视图（不分区域、不带时间窗），理由同 by_account。
+_byclient_cache = {"data": None, "at": 0.0}
+_byclient_lock = threading.Lock()
+
+
+def usage_by_client_ip(ttl=None):
+    """按客户端地址聚合整份 usage 日志（面板「来源 IP」用）。
+
+    client_ip 字段是后加的，旧行没有它；那些行落进「(未知)」桶，见
+    _fold_usage_by_client()。
+    """
+    ttl = _STATS_TTL if ttl is None else ttl
+    now = time.time()
+    with _byclient_lock:
+        if _byclient_cache["data"] is not None and (now - _byclient_cache["at"]) < ttl:
+            return _byclient_cache["data"]
+        data = _usage_by_client_uncached()
+        _byclient_cache["at"] = time.time()
+        _byclient_cache["data"] = data
+    return data
+
+
+def usage_by_client_ip_etag():
+    """usage_by_client_ip() 当前缓存条目的 ETag；没有条目时返回 None。
+
+    这个视图只有一条缓存（没有窗口/区域参数），所以键是常量；配对调用由
+    _json_cached() 负责，理由见那里。
+    """
+    with _byclient_lock:
+        if _byclient_cache["data"] is None:
+            return None
+        built_at = _byclient_cache["at"]
+    return _cache_etag("by-client-ip", "all", built_at)
+
+
+_byclient_state = {"buckets": None, "offset": 0, "key": None, "tail": b""}
+# 独立的锁：wrapper 持着 _byclient_lock 进来重建，而测试/基准会直接调
+# _usage_by_client_uncached()；共用一把非重入锁会死锁（by_account 那边的教训）。
+_byclient_state_lock = threading.Lock()
+
+
+def _fold_usage_by_client(row, buckets):
+    """把一行折进按 IP 的桶。
+
+    跳过条件与按账号的折叠一致：error 行没有可计费用量。没有 client_ip 的行
+    落进「(未知)」——那一桶就是「IP 字段上线前」的证据，不是解析失败。
+    """
+    if row.get("error"):
+        return
+    key = row.get("client_ip") or "(未知)"
+    at = row.get("at") or 0
+    bucket = buckets.get(key)
+    if bucket is None:
+        bucket = buckets[key] = {
+            "ip": key, "requests": 0, "prompt_tokens": 0,
+            "completion_tokens": 0, "reasoning_tokens": 0,
+            "cached_tokens": 0, "total_tokens": 0,
+            "models": {}, "accounts": {},
+            "first_at": at, "last_at": at,
+        }
+    bucket["requests"] += 1
+    bucket["prompt_tokens"] += row.get("prompt_tokens") or 0
+    bucket["completion_tokens"] += row.get("completion_tokens") or 0
+    bucket["reasoning_tokens"] += row.get("reasoning_tokens") or 0
+    bucket["cached_tokens"] += row.get("cached_tokens") or 0
+    bucket["total_tokens"] += row.get("total_tokens") or 0
+    model = row.get("model") or "?"
+    models = bucket["models"]
+    models[model] = models.get(model, 0) + 1
+    account = row.get("account")
+    if account:
+        accounts = bucket["accounts"]
+        accounts[account] = accounts.get(account, 0) + 1
+    if at:
+        if not bucket["first_at"] or at < bucket["first_at"]:
+            bucket["first_at"] = at
+        if at > bucket["last_at"]:
+            bucket["last_at"] = at
+
+
+def _usage_by_client_buckets():
+    """折好的按 IP 桶（增量刷新），返回逐条深拷贝的 dict。
+
+    拷贝是必须的：_usage_by_client_uncached() 会把 models/accounts 换成排好序的
+    列表，下一次增量刷新必须还在原处找到计数字典。
+    """
+    with _byclient_state_lock:
+        log_key = _usage_log_key()
+        if _byclient_state["buckets"] is None:
+            # 这个视图不接 checkpoint 适配（_usage_cache_adopt_*）：它是新视图，
+            # 缓存文件里没有对应条目，从零折一次、之后增量就够了。
+            _byclient_state.update({"buckets": {}, "offset": 0, "tail": b""})
+        elif not _log_resume_ok(_byclient_state, log_key):
+            _byclient_state.update({"buckets": {}, "offset": 0, "tail": b""})
+        _byclient_state["key"] = log_key
+        offset, error = _scan_usage_from(
+            _byclient_state["offset"],
+            lambda row: _fold_usage_by_client(row, _byclient_state["buckets"]))
+        buckets = _byclient_state["buckets"]
+        if error is None:
+            _byclient_state["offset"] = offset
+            _byclient_state["tail"] = _log_tail_signature(offset)
+        else:
+            # 出错的那一行可能已经折了一半，下一次从零重来（by_account 同款处理）。
+            log("usage_by_client_ip failed: %s" % error)
+            _byclient_state.update({"buckets": {}, "offset": 0, "tail": b""})
+        out = {k: dict(v, models=dict(v["models"]), accounts=dict(v["accounts"]))
+               for k, v in buckets.items()}
+    return out
+
+
+def _usage_by_client_uncached():
+    """把按 IP 的桶整理成面板载荷。
+
+    两个方向一起给：「ips」回答「谁在用」，「accounts」回答「这个号被哪些
+    客户端用过」。后者是折叠时顺带攒下的（每行加一次），不额外扫日志。
+    """
+    buckets = _usage_by_client_buckets()
+    geo_cache = client_geo_cache() if client_geo_enabled() else None
+    ips = []
+    per_account = {}
+    for bucket in buckets.values():
+        accounts = bucket["accounts"]
+        ips.append({
+            "ip": bucket["ip"],
+            "geo": (geo_cache.label(bucket["ip"]) if geo_cache is not None
+                    else wb_client_geo.local_label(bucket["ip"])),
+            "requests": bucket["requests"],
+            "prompt_tokens": bucket["prompt_tokens"],
+            "completion_tokens": bucket["completion_tokens"],
+            "reasoning_tokens": bucket["reasoning_tokens"],
+            "cached_tokens": bucket["cached_tokens"],
+            "total_tokens": bucket["total_tokens"],
+            "first_at": bucket["first_at"],
+            "last_at": bucket["last_at"],
+            "models": sorted(bucket["models"].items(), key=lambda kv: -kv[1])[:5],
+            "accounts": sorted(accounts.items(), key=lambda kv: -kv[1])[:8],
+        })
+        for account, requests in accounts.items():
+            item = per_account.get(account)
+            if item is None:
+                item = per_account[account] = {
+                    "account": account, "requests": 0, "ips": {}, "last_at": 0}
+            item["requests"] += requests
+            item["ips"][bucket["ip"]] = item["ips"].get(bucket["ip"], 0) + requests
+            if (bucket["last_at"] or 0) > item["last_at"]:
+                item["last_at"] = bucket["last_at"]
+    ips.sort(key=lambda b: (-b["total_tokens"], -b["requests"]))
+    accounts = sorted(per_account.values(), key=lambda a: -a["requests"])
+    for item in accounts:
+        item["ips"] = sorted(item["ips"].items(), key=lambda kv: -kv[1])[:8]
+    if geo_cache is not None:
+        # 这个视图是聚合后的（地址数量有限），一次把没查过的都排上。
+        _geo_enqueue([item["ip"] for item in ips])
+    return {"ips": ips, "accounts": accounts}
+
+
 _analytics_cache = {}
 _analytics_lock = threading.Lock()
 
@@ -12330,6 +12642,8 @@ def runtime_settings_view():
             wb_settings.remaining_priority_enabled(ACCOUNTS_DIR),
         "egress_backoff_enabled":
             wb_settings.egress_backoff_enabled(ACCOUNTS_DIR),
+        # 来源 IP 归属地（面板显示用）：默认开，关闭只停新查询，已有缓存照旧显示。
+        "client_geo_enabled": wb_settings.client_geo_enabled(ACCOUNTS_DIR),
         "pool_separation_enabled":
             wb_settings.pool_separation_enabled(ACCOUNTS_DIR),
         # The checkbox reflects the persisted preference; this reflects what
@@ -12346,6 +12660,13 @@ def runtime_settings_view():
             wb_settings.account_max_concurrent(ACCOUNTS_DIR),
         "account_max_concurrent_max":
             wb_settings.ACCOUNT_MAX_CONCURRENT_MAX,
+        "account_queue_seconds":
+            wb_settings.account_queue_seconds(ACCOUNTS_DIR),
+        "account_queue_seconds_max":
+            wb_settings.ACCOUNT_QUEUE_SECONDS_MAX,
+        "auto_probe_percent":
+            wb_settings.auto_probe_percent(ACCOUNTS_DIR),
+        "auto_probe": auto_probe_state(),
         "account_inflight": account_inflight_snapshot(),
         "affinity_stable_key_enabled":
             wb_settings.affinity_stable_key_enabled(ACCOUNTS_DIR),
@@ -12399,7 +12720,7 @@ def runtime_settings_view():
         "accounts_dir": ACCOUNTS_DIR,
         "usage_dir": USAGE_DIR,
         "settings_file": wb_settings.settings_path(ACCOUNTS_DIR),
-        "version": "2.1.3",
+        "version": "2.2.0",
     }
 def current_account():
     """Account used for display purposes (health / usage summaries)."""
@@ -16877,6 +17198,30 @@ def bind_account_slot_to_response(response, account):
         release_once()
 
 
+def wait_for_pool_account(pick, seconds):
+    """池子里暂时没有可用账号时，原地排队等一个（见 wb_settings.account_queue_seconds）。
+
+    返回 (got, account)：等到了就是 (True, account)，预算用完还是空就是 (False, None)。
+
+    `pick()` 每次调用都重新扫一遍池子，返回「此刻可用且已占住名额」的账号或 None。
+    先取一次再睡：名额释放、冷却结束都是外部事件，多睡一个 tick 就多慢一个 tick；
+    睡 100ms 是为了让出 GIL —— 这是唯一一个会主动睡眠的派发路径，摆明了告诉运维
+    「这里是排队，不是卡死」。
+    """
+    if seconds <= 0:
+        account = pick()
+        return (account is not None), account
+    deadline = time.monotonic() + seconds
+    while True:
+        account = pick()
+        if account is not None:
+            return True, account
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False, None
+        time.sleep(min(0.1, remaining))
+
+
 def account_inflight_snapshot():
     """{uid: 在飞数}，面板与测试用。"""
     with _ACCOUNT_INFLIGHT_LOCK:
@@ -17937,8 +18282,13 @@ def upstream_timeouts():
         cfg = wb_settings.upstream_config(ACCOUNTS_DIR)
     except Exception:
         cfg = None
-    header = 120.0
-    idle = 300.0
+    # 45s covers connect/TLS/upload-headers for a ~500KB body; the old 120s
+    # meant a stalled upstream held a request (and its concurrency slot) for two
+    # minutes before the retry even started. 90s of stream silence is already
+    # 60x the observed reasoning-frame interval (~40ms), so it only fires on a
+    # genuinely dead stream.
+    header = 45.0
+    idle = 90.0
     if isinstance(cfg, dict):
         try:
             header = float(cfg.get("header_timeout_seconds") or header)
@@ -18128,6 +18478,14 @@ def open_upstream(payload, session_key=None, target_realm=None, prebuilt_body=No
             account.note_unknown_failure(message)
         else:
             account.note_failure(message)
+        # 这一笔把账号推过熔断阈值时，顺手看一眼池子：被本地窗口关掉的账号超过
+        # 一半就安排一轮后台探活。放在这里而不是只在「池子抽干」处，是为了在还
+        # 没全瘫的时候就把它捞回来（抽干之后每个客户端都在重试，越重试越难恢复）。
+        if float(getattr(account, "breaker_until", 0.0) or 0.0) > time.time():
+            try:
+                maybe_auto_probe(realm, model, reason="account breaker tripped")
+            except Exception:
+                pass
         return True
 
     last_error = None
@@ -18149,6 +18507,8 @@ def open_upstream(payload, session_key=None, target_realm=None, prebuilt_body=No
     # Panel parity: header/idle timeouts are read once per request, not
     # once per retry, so a settings read never lands in the retry loop.
     header_timeout, idle_timeout = upstream_timeouts()
+    # 池子里暂时没账号时的排队预算，同样一次请求读一次（见账户名额耗尽/整池冷却）。
+    account_queue_for = wb_settings.account_queue_seconds(ACCOUNTS_DIR)
     # Same treatment for the egress-level backoff switch (issue #271): one read
     # per request, and when it is off the retry loop below is byte-for-byte the
     # old path.
@@ -18253,7 +18613,20 @@ def open_upstream(payload, session_key=None, target_realm=None, prebuilt_body=No
             time.sleep(min(1.5 * (transient_hits or local_net_hits), 3.0))
             account = pick_account()
         if account is None:
-            break
+            # 池子里暂时没有可用账号：要么全部在冷却/禁用，要么每个账号的在飞名额
+            # 都被占满（并发高峰）。这两种「暂时」都很短（名额随请求结束释放、
+            # 停放是几十秒），立刻 503 会让客户端看到「所有请求同时失败」，重试又
+            # 会把刚恢复的名额再抢空。开 account_queue_seconds 后这批请求原地等一个
+            # 名额，而不是把失败直接甩出去。
+            # 只在「这一轮还没试过任何账号」时排队：试过一圈都失败说明是上游/账号
+            # 真出问题，再排只是让客户端白等。
+            if account_queue_for > 0 and not tried:
+                def _pick_again():
+                    busy.clear()
+                    return pick_account()
+                _, account = wait_for_pool_account(_pick_again, account_queue_for)
+            if account is None:
+                break
         if account.realm != realm:
             if session_key and POOL: POOL.affinity.demote(session_key, account.uid)
             account_slot_release(account)
@@ -18754,6 +19127,12 @@ def open_upstream(payload, session_key=None, target_realm=None, prebuilt_body=No
     scope = ""
     if allowed_accounts:
         scope = ("; this API key may use %d account(s)" % len(allowed_accounts))
+    # 池子被抽干：如果丢的是「本地熔断 / 冷却」这类自己记账的窗口，先让后台探活
+    # 一轮。这个请求照旧拿到 503，但几秒后能用的账号就回来了，不会一直全瘫着。
+    try:
+        maybe_auto_probe(realm, model, reason="no usable account")
+    except Exception:
+        pass
     raise RuntimeError("no usable account for realm '%s': every candidate is "
                        "disabled, cooling down, expired, out of upstream quota "
                        "or parked by a local limit%s%s"
@@ -19123,6 +19502,124 @@ def probe_account(account, model=None, timeout=30):
         account.note_error(str(exc)[:80], cooldown=0)
         row["fails"] = int(account.fails)
         return row
+
+# --- 池子自动探活 -----------------------------------------------------------
+#: 两次自动探活之间的最小间隔（秒）。探针本身是真实的上游请求，一被抽干就连着
+#: 测反而会把刚恢复的账号又打回熔断，所以宁可慢一轮。
+AUTO_PROBE_MIN_INTERVAL = 120.0
+_AUTO_PROBE_LOCK = threading.Lock()
+_AUTO_PROBE = {"running": False, "last_at": 0.0, "last": {}}
+
+
+def pool_parked_stats(realm, model=None, now=None):
+    """该区域的已启用账号里，有多少个只是被**本地临时惩罚**关在门外。
+
+    只数「熔断 / 降权 / 软限流冷却 / 模型冷却」：这些都是本地记账，一条真实成功
+    的请求就能清掉，所以值得自动探活。风控限制（403 / 11140）、余额保护、日额度
+    用尽单独计数，不参与触发——前者的正确动作是继续停手，后者探活也解不开。
+    """
+    now = time.time() if now is None else now
+    accounts = [a for a in (POOL.accounts if POOL else [])
+                if (getattr(a, "realm", "") or "") == realm and a.enabled]
+    parked = restricted = blocked = 0
+    for account in accounts:
+        if float(getattr(account, "restricted_until", 0.0) or 0.0) > now:
+            restricted += 1
+            continue
+        if (float(getattr(account, "breaker_until", 0.0) or 0.0) > now
+                or float(getattr(account, "degrade_until", 0.0) or 0.0) > now
+                or float(getattr(account, "cooldown_until", 0.0) or 0.0) > now
+                or (model and account.model_cooldown_until(model) > now)):
+            parked += 1
+            continue
+        # 没有本地惩罚窗口，再看它是不是因为别的原因接不了单（额度耗尽、停用…
+        # 这些探活也解不开）。refresh=False：这条判断在请求路径上，不能顺手去
+        # 刷新临期凭证（那是网络动作）。
+        try:
+            usable = account.ready(model=model, refresh=False)
+        except TypeError:      # 老式 / 桩账号的 ready() 没有 refresh 形参
+            usable = account.ready(model=model)
+        if not usable:
+            blocked += 1
+    return {"total": len(accounts), "parked": parked,
+            "restricted": restricted, "blocked": blocked}
+
+
+def auto_probe_state():
+    """面板读的自动探活状态：是否正在跑、上次触发时刻、上次结果。"""
+    with _AUTO_PROBE_LOCK:
+        return {"running": _AUTO_PROBE["running"],
+                "last_at": _AUTO_PROBE["last_at"],
+                "last": dict(_AUTO_PROBE["last"])}
+
+
+def maybe_auto_probe(realm, model=None, reason=""):
+    """池子里超过一半账号被本地熔断关着时，后台跑一次「一键测试」。
+
+    2026-11 生产：上游按「账号 + 分钟」计 token，突发并发把几个账号压出 429 后
+    它们层层熔断，26 个账号一起 cooling，之后每个请求都立刻拿到 503；客户端的
+    重试又把刚恢复的名额抢空，用户几分钟里看不到任何一次成功响应。而池子里大半
+    账号其实只是被本地窗口关着——一条探针就能判明，成功还能顺手清掉熔断。
+
+    这不是「继续换号重试」：风控连坐暂停期间一律不探（那时要停手），被 403 限制
+    的账号也不出现在探针名单里（见 _auto_probe_worker）。
+    """
+    percent = wb_settings.auto_probe_percent(ACCOUNTS_DIR)
+    if percent <= 0:
+        return False
+    if restriction_hold_remaining(realm) > 0:
+        return False
+    stats = pool_parked_stats(realm, model)
+    if stats["total"] < 2 or not stats["parked"]:
+        return False
+    if stats["parked"] * 100 <= percent * stats["total"]:
+        return False
+    now = time.time()
+    with _AUTO_PROBE_LOCK:
+        if _AUTO_PROBE["running"] or now - _AUTO_PROBE["last_at"] < AUTO_PROBE_MIN_INTERVAL:
+            return False
+        _AUTO_PROBE["running"] = True
+        _AUTO_PROBE["last_at"] = now
+    threading.Thread(target=_auto_probe_worker, args=(realm, model, reason),
+                     name="auto-probe", daemon=True).start()
+    return True
+
+
+def _auto_probe_worker(realm, model, trigger):
+    """后台探活一轮：每个可探测账号发一条最小请求，成功即清掉它的本地惩罚。"""
+    started = time.time()
+    try:
+        model = model or TEST_MODEL_DEFAULT
+        now = time.time()
+        targets = [a for a in (POOL.accounts if POOL else [])
+                   if (getattr(a, "realm", "") or "") == realm and a.enabled
+                   and float(getattr(a, "restricted_until", 0.0) or 0.0) <= now]
+        network = probe_local_network(realm)
+        if not targets or not network.get("ok"):
+            log("auto probe skipped: realm=%s accounts=%d network=%s"
+                % (realm, len(targets), "ok" if network.get("ok") else "DOWN"),
+                level="WARN")
+            return
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(PROBE_CONCURRENCY, len(targets))) as executor:
+            rows = list(executor.map(lambda acc: probe_account(acc, model), targets))
+        passed = sum(1 for row in rows if row.get("ok"))
+        result = {"realm": realm, "model": model, "tested": len(rows),
+                  "passed": passed, "failed": len(rows) - passed,
+                  "elapsed_ms": int((time.time() - started) * 1000),
+                  "trigger": str(trigger or "")[:80]}
+        log("auto probe: realm=%s model=%s tested=%d passed=%d failed=%d in %dms "
+            "(triggered by %s)"
+            % (realm, model, len(rows), passed, len(rows) - passed,
+               result["elapsed_ms"], result["trigger"] or "-"))
+        with _AUTO_PROBE_LOCK:
+            _AUTO_PROBE["last"] = result
+    except Exception as exc:  # 探活是后台动作，任何失败都不许影响请求路径
+        log("auto probe failed: %s" % exc, level="WARN")
+    finally:
+        with _AUTO_PROBE_LOCK:
+            _AUTO_PROBE["running"] = False
+
 
 def extract_session_key(headers, payload):
     key = (
@@ -22075,6 +22572,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         if not self.parse_request():
             return
+        # 一条 keep-alive 连接服务多轮请求，所以每次都要重算，不能只在 __init__ 里算。
+        self.client_ip = client_ip_of(
+            self.client_address[0] if self.client_address else "",
+            self.headers)
         mname = 'do_' + self.command
         if not hasattr(self, mname):
             self.send_error(501, "Unsupported method (%r)" % self.command)
@@ -22091,7 +22592,7 @@ class Handler(BaseHTTPRequestHandler):
             super().finish()
         except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
             pass
-    server_version = "wb-proxy/2.1.3"
+    server_version = "wb-proxy/2.2.0"
     def log_message(self, fmt, *args):
         # 静默过滤前端看板高频定时心跳的正常 200 GET 请求（/logs、/usage、/accounts 轮询等）
         # 避免自增死循环刷屏与日志污染。遇 4xx/5xx 异常或所有非 GET 业务操作依然如实记录。
@@ -22107,7 +22608,8 @@ class Handler(BaseHTTPRequestHandler):
                     return
         except Exception:
             pass
-        log(fmt % args)
+        # 每条 access 日志都带来源 IP：排查"谁在刷接口"时不必再去反查时间戳。
+        log("%s %s" % (getattr(self, "client_ip", "") or "-", fmt % args))
     def _json(self, code, obj):
         if getattr(self, "_capture", None) is not None:
             # 内部复用（MCP tools/call）：把响应收进槽里，一个字节都不发。
@@ -22920,6 +23422,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._get_usage_analytics(query)
         if path == "/usage/by-account":
             return self._get_usage_by_account()
+        if path == "/usage/by-client-ip":
+            return self._get_usage_by_client_ip()
+        if path == "/ip/geo":
+            return self._get_client_geo(query)
         if path == "/usage/remaining":
             return self._get_usage_remaining()
         if path == "/usage/perf":
@@ -23392,6 +23898,34 @@ class Handler(BaseHTTPRequestHandler):
         return self._json_cached_panel(200,
                                  lambda: {"accounts": usage_by_account()},
                                  usage_by_account_etag)
+
+    def _get_usage_by_client_ip(self):
+        if not self._authorized():
+            return
+        # 与 /usage/by-account 同款：载荷挂 TTL + ETag，面板轮询在 TTL 内命中
+        # 同一条缓存 → 校验符不变 → 304。首轮全量折叠一次，之后只折新行。
+        return self._json_cached_panel(200, usage_by_client_ip,
+                                       usage_by_client_ip_etag)
+
+    def _get_client_geo(self, query):
+        """来源 IP 的地区补查：读缓存，并把还没查过的地址排进后台。
+
+        返回的是「此刻知道什么」——不知道的地址下一次轮询就会有值，所以这里
+        不等查询完成：一个外部接口不该拖住面板的一次 5 秒轮询。
+        """
+        if not self._authorized():
+            return
+        raw = (query.get("ips") or [""])[0]
+        ips = [part.strip() for part in raw.replace(" ", ",").split(",")
+               if part.strip()][:50]
+        enabled = client_geo_enabled()
+        cache = client_geo_cache()
+        if enabled:
+            _geo_enqueue(ips)
+        return self._json_panel(200, {
+            "enabled": enabled,
+            "geo": {ip: cache.describe(ip) for ip in ips},
+        })
 
     def _get_usage_remaining(self):
         if not self._authorized():
@@ -24558,7 +25092,8 @@ class Handler(BaseHTTPRequestHandler):
             stream=False,
             elapsed_ms=(time.time() - started_at) * 1000.0,
             account=account.uid, outcome="completed", key=self._key_id(),
-            realm=realm, kind=kind)
+            realm=realm, kind=kind,
+            client_ip=getattr(self, "client_ip", None))
 
     def _handle_media_post(self, path, payload):
         """媒体 POST 的入口：开关 → 参数 → 限流 → 并发槽 → 选号 → 发请求 → 记账。"""
@@ -25634,6 +26169,16 @@ class Handler(BaseHTTPRequestHandler):
                 # 由下一个请求照常推（此刻就算推也要先折一次剩余估算，没必要
                 # 为一个开关多付这一趟）。
                 POOL.apply_remaining_weights(None)
+        if "client_geo_enabled" in payload:
+            # 来源 IP 归属地开关：纯展示，关掉只停查询。形状与
+            # egress_backoff_enabled 一致——严格 JSON 布尔。
+            raw = payload.get("client_geo_enabled")
+            if not isinstance(raw, bool):
+                return self._error(400, "client_geo_enabled must be true or false",
+                                   "invalid_request_error")
+            wb_settings.set_client_geo_enabled(ACCOUNTS_DIR, raw)
+            reset_client_geo_state()
+            reply["client_geo_enabled"] = raw
         if "pool_separation_enabled" in payload:
             raw = payload.get("pool_separation_enabled")
             if not isinstance(raw, bool):
@@ -25677,6 +26222,28 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as exc:
                 return self._error(400, str(exc), "invalid_request_error")
             reply["account_max_concurrent"] = value
+        if "account_queue_seconds" in payload:
+            raw = payload.get("account_queue_seconds")
+            if isinstance(raw, bool) or not isinstance(raw, int):
+                return self._error(
+                    400, "account_queue_seconds must be a whole number",
+                    "invalid_request_error")
+            try:
+                value = wb_settings.set_account_queue_seconds(ACCOUNTS_DIR, raw)
+            except ValueError as exc:
+                return self._error(400, str(exc), "invalid_request_error")
+            reply["account_queue_seconds"] = value
+        if "auto_probe_percent" in payload:
+            raw = payload.get("auto_probe_percent")
+            if isinstance(raw, bool) or not isinstance(raw, int):
+                return self._error(
+                    400, "auto_probe_percent must be a whole number",
+                    "invalid_request_error")
+            try:
+                value = wb_settings.set_auto_probe_percent(ACCOUNTS_DIR, raw)
+            except ValueError as exc:
+                return self._error(400, str(exc), "invalid_request_error")
+            reply["auto_probe_percent"] = value
         if "affinity_stable_key_enabled" in payload:
             # 更稳的会话粘滞键：严格 JSON 布尔（字符串 "false" 会是真值）。
             raw = payload.get("affinity_stable_key_enabled")
@@ -28045,7 +28612,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._error(
                 502, "compaction produced no summary (the model returned no text); retry")
         wall = int((time.time() - t_start) * 1000)
-        record_upstream_usage(upstream, model, chat_obj.get("usage"), stream=False,
+        record_upstream_usage_for(self, upstream, model, chat_obj.get("usage"), stream=False,
                               elapsed_ms=wall, fp=fp, account=account.uid,
                               key=self._key_id())
         item = {
@@ -28162,7 +28729,7 @@ class Handler(BaseHTTPRequestHandler):
                     holder["usage"] = total_usage
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             wall = int((time.time() - t_start) * 1000)
-            record_upstream_usage(upstream, model, holder.get("usage"), stream=True, elapsed_ms=wall,
+            record_upstream_usage_for(self, upstream, model, holder.get("usage"), stream=True, elapsed_ms=wall,
                          ttft_ms=first_ms,
                          gen_ms=(wall - first_ms) if first_ms is not None else None,
                          fp=fp, account=account.uid, realm=realm,
@@ -28192,7 +28759,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         wall = int((time.time() - t_start) * 1000)
-        record_upstream_usage(upstream, model, holder.get("usage"), stream=True, elapsed_ms=wall,
+        record_upstream_usage_for(self, upstream, model, holder.get("usage"), stream=True, elapsed_ms=wall,
                      ttft_ms=first_ms,
                      gen_ms=(wall - first_ms) if first_ms is not None else None,
                      fp=fp, account=account.uid, realm=realm,
@@ -28253,7 +28820,7 @@ class Handler(BaseHTTPRequestHandler):
                          key=self._key_id())
             return self._error(
                 502, "upstream returned reasoning without output text; retry")
-        record_upstream_usage(upstream, model, chat_obj.get("usage"), stream=False, elapsed_ms=wall, fp=fp,
+        record_upstream_usage_for(self, upstream, model, chat_obj.get("usage"), stream=False, elapsed_ms=wall, fp=fp,
                      account=account.uid, realm=realm, key=self._key_id(),
                      effort=effort)
         return self._json(200, result)
@@ -28396,7 +28963,7 @@ class Handler(BaseHTTPRequestHandler):
             chat_obj = aggregate_stream(upstream, model, None)
             result = chat_to_messages(chat_obj)
             wall = int((time.time() - t_start) * 1000)
-            record_upstream_usage(upstream, model, chat_obj.get("usage"), stream=False, elapsed_ms=wall,
+            record_upstream_usage_for(self, upstream, model, chat_obj.get("usage"), stream=False, elapsed_ms=wall,
                          fp=fp, account=account.uid, realm=realm,
                          key=self._key_id(), effort=effort)
             return self._json(200, result)
@@ -28434,7 +29001,7 @@ class Handler(BaseHTTPRequestHandler):
                     heartbeat.write(frame)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             wall = int((time.time() - t_start) * 1000)
-            record_upstream_usage(upstream, model, holder.get("usage"), stream=True, elapsed_ms=wall,
+            record_upstream_usage_for(self, upstream, model, holder.get("usage"), stream=True, elapsed_ms=wall,
                          ttft_ms=first_ms,
                          gen_ms=(wall - first_ms) if first_ms is not None else None,
                          fp=fp, account=account.uid, realm=realm,
@@ -28459,7 +29026,7 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
         wall = int((time.time() - t_start) * 1000)
-        record_upstream_usage(upstream, model, holder.get("usage"), stream=True, elapsed_ms=wall,
+        record_upstream_usage_for(self, upstream, model, holder.get("usage"), stream=True, elapsed_ms=wall,
                      ttft_ms=first_ms,
                      gen_ms=(wall - first_ms) if first_ms is not None else None,
                      fp=fp, account=account.uid, realm=realm,
@@ -28819,8 +29386,9 @@ class Handler(BaseHTTPRequestHandler):
         given = client_effort_of(payload) or payload.get("reasoning") \
             or payload.get("thinking") or payload.get("enable_thinking")
         log(
-            "chat: model=%s client_effort=%r -> upstream_effort=%r stream=%s msgs=%d key=%s"
+            "chat: ip=%s model=%s client_effort=%r -> upstream_effort=%r stream=%s msgs=%d key=%s"
             % (
+                getattr(self, "client_ip", None),
                 payload.get("model"),
                 given,
                 upstream_effort_of(forwarded, payload.get("model")),
@@ -29183,7 +29751,7 @@ class Handler(BaseHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
                 # Client hung up; still account for what upstream produced.
                 wall = int((time.time() - t_start) * 1000)
-                record_upstream_usage(upstream, model, last_usage, stream=True,
+                record_upstream_usage_for(self, upstream, model, last_usage, stream=True,
                              elapsed_ms=wall, ttft_ms=first_ms,
                              gen_ms=(wall - first_ms) if first_ms is not None else None,
                              fp=fp, account=account.uid, realm=realm,
@@ -29263,7 +29831,7 @@ class Handler(BaseHTTPRequestHandler):
                              gen_ms=(wall - first_ms) if first_ms is not None else None,
                              fp=fp, outcome="failed", realm=realm, key=self._key_id())
             else:
-                record_upstream_usage(upstream, model, last_usage, stream=True,
+                record_upstream_usage_for(self, upstream, model, last_usage, stream=True,
                              elapsed_ms=wall, ttft_ms=first_ms,
                              gen_ms=(wall - first_ms) if first_ms is not None else None,
                              fp=fp, account=account.uid, realm=realm,
@@ -29300,7 +29868,7 @@ class Handler(BaseHTTPRequestHandler):
         first_at = result.get("first_chunk_at")
         # Measured from request arrival so streaming and non-streaming are comparable.
         first_ms = int((first_at - t_start) * 1000) if first_at else None
-        record_upstream_usage(upstream, model, result.get("usage"), stream=False,
+        record_upstream_usage_for(self, upstream, model, result.get("usage"), stream=False,
                      elapsed_ms=wall, ttft_ms=first_ms,
                      gen_ms=(wall - first_ms) if first_ms is not None else None,
                      fp=fp, account=account.uid, realm=realm,
@@ -29717,15 +30285,18 @@ def _log_startup_summary(args, api_key_generated):
         sys.stdout.flush()
 
 class GatewayServer(ThreadingHTTPServer):
-    """主服务的 HTTP 服务类：只为把 listen backlog 从 stdlib 默认的 5 提到 128。
+    """主服务的 HTTP 服务类：只为把 listen backlog 从 stdlib 默认的 5 提到 1024。
 
     backlog=5 在突发并发下（面板打开一页就是 ~7 个并发请求，多标签更糟）会让
     内核来不及 accept 的 SYN 被丢弃、客户端按 1s 粒度重传，表现为一部分请求整整
     慢 1 秒（路由器实测：64 并发突发 43/64 卡 >=1s、最长 2.8s；backlog=128 后
-    0/64、最长 0.18s）。listen() 在 TCPServer.__init__ 里就被调用，所以必须是
-    类属性——实例化之后再改就晚了。
+    0/64、最长 0.18s）。128 在「几百个客户端一起重连」时仍会溢出（每个连接在
+    队列里排到 accept 之间只占一个条目不占线程，深度成本很低），所以提到 1024；
+    内核侧上限由 net.core.somaxconn 决定，本机 4096、容器里通常 4096，取 1024
+    是为了在最小配置的盒子上也不会被静默截断。listen() 在 TCPServer.__init__
+    里就被调用，所以必须是类属性——实例化之后再改就晚了。
     """
-    request_queue_size = 128
+    request_queue_size = 1024
 
 def _serve_forever(args):
     try:
