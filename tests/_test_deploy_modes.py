@@ -50,7 +50,7 @@ class DeployModeTests(unittest.TestCase):
         self.assertIn("    image: " + image, self.script)
         self.assertIn("\n    image: " + image, self.readme)
         self.assertIn(
-            'href="https://github.com/ardeyouxipianyi/workbuddy2api-hub"',
+            'href="https://github.com/niyouqianma/workbuddy2api-hub"',
             read("dashboard.html"))
 
     def test_public_mode_explains_the_reverse_proxy_requirement(self):
