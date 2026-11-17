@@ -263,7 +263,7 @@ class UpdateSourceTests(unittest.TestCase):
 
     def test_the_default_repository_is_the_one_that_ships_this_code(self):
         self.assertEqual(wb_updates.DEFAULT_REPOSITORY,
-                         "ardeyouxipianyi/workbuddy2api-hub")
+                         "niyouqianma/workbuddy2api-hub")
 
     def test_both_endpoints_are_built_from_that_repository(self):
         repo = wb_updates.DEFAULT_REPOSITORY
